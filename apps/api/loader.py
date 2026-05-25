@@ -42,6 +42,11 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
         media_catalog = _read("media_catalog.json")
         storage_catalog = _read("storage_catalog.json")
         log_events = _read("log_events.json")
+        ghosts_history = _read("ghosts_history.json")
+        # ghosts_history.json is a single dict {removed, added, modified, previous_snapshot}
+        # while everything else is a list — coerce missing to {} so attribute access works.
+        if isinstance(ghosts_history, list):
+            ghosts_history = {}
 
         databases[account_id] = {
             "decrypted": True,
@@ -52,16 +57,19 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
             "media_catalog": media_catalog,
             "storage_catalog": storage_catalog,
             "log_events": log_events,
+            "ghosts_history": ghosts_history,
             "schema": {"tables": ["t2 (peers)", "t7 (messages)"]},
         }
 
         tombstones = sum(1 for e in storage_catalog if not e.get("on_disk"))
+        removed_count = len(ghosts_history.get("removed", []))
         print(
             f"  {account_id}: {len(messages)} messages, {len(peers)} peers, "
             f"{len(conversations)} conversations, {len(messages_fts)} fts, "
             f"{len(media_catalog)} media, "
             f"{len(storage_catalog)} storage ({tombstones} tombstones), "
-            f"{len(log_events)} log events"
+            f"{len(log_events)} log events, "
+            f"{removed_count} historical ghosts"
         )
 
     return {"databases": databases}

@@ -112,6 +112,28 @@ class StoragePage(BaseModel):
     per_page: int
 
 
+class GhostEntry(BaseModel):
+    """One message that diverged between two parsed_data snapshots."""
+    model_config = ConfigDict(extra="allow")
+    peer_id: int | None = None
+    peer_name: str | None = None
+    timestamp: int | None = None
+    date: str | None = None
+    text: str = ""
+    media: list[dict] = []
+    outgoing: bool | None = None
+    account: str = ""
+
+
+class GhostPage(BaseModel):
+    items: list[GhostEntry]
+    total: int
+    page: int
+    per_page: int
+    kind: str
+    previous_snapshot: str | None = None
+
+
 class StatsDb(BaseModel):
     decrypted: bool
     message_count: int

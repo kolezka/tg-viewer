@@ -841,6 +841,34 @@ def export_account(
         result['storage_entries'] = len(storage_catalog)
         result['storage_tombstones'] = tombstones
 
+    # Step 3d: History diff vs the previous parsed snapshot (run-vs-run drift).
+    # Identifies messages that were in t7 last run but are gone now — independent
+    # forensic signal alongside the in-process WAL detection.
+    if backup_dir is not None:
+        from . import ghost_detector
+        try:
+            prev = ghost_detector.find_previous_snapshot(
+                output_dir.resolve(), backup_dir.parent.parent.resolve()
+            )
+            if prev is not None and (prev / f"account-{account_id}" / "messages.json").exists():
+                with open(prev / f"account-{account_id}" / "messages.json", encoding='utf-8') as fh:
+                    prev_msgs = json.load(fh)
+                history_diff = ghost_detector.diff_snapshots(prev_msgs, messages_t7)
+                history_diff['previous_snapshot'] = str(prev)
+                with open(account_dir / 'ghosts_history.json', 'w', encoding='utf-8') as f:
+                    json.dump(history_diff, f, indent=2, ensure_ascii=False)
+                print(
+                    f"    History diff vs {prev.parent.name}: "
+                    f"{len(history_diff['removed'])} removed, "
+                    f"{len(history_diff['added'])} added, "
+                    f"{len(history_diff['modified'])} modified"
+                )
+                result['history_removed'] = len(history_diff['removed'])
+                result['history_added'] = len(history_diff['added'])
+                result['history_modified'] = len(history_diff['modified'])
+        except Exception as e:
+            print(f"    History diff error: {e}")
+
     # Step 4: Create combined export, deduping FTS entries that already exist in t7.
     # Key on (peer_id, text) so identical replies in different chats are kept distinct.
     seen = {(m.get('peer_id'), m.get('text', '')) for m in messages_t7 if m.get('text')}

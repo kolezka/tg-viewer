@@ -92,6 +92,9 @@ COMMANDS:
     webui DIR           Start web UI to visualize parsed data
     dev DIR             Start dev stack (FastAPI on 5000 + Bun on 5173 with proxy)
     full [DIR]          Run complete workflow: backup → decrypt → parse → webui
+    ghosts [OLD NEW]    Diff two parsed_data snapshots; surface deleted messages.
+                        Without args: auto-picks the two newest parsed_data dirs.
+                        Writes ghosts_diff.json next to the script.
     clean               Remove all backup, decrypted, and parsed data
     setup               Install Python dependencies
     help                Show this help
@@ -416,6 +419,65 @@ run_clean() {
     ok "Cleanup complete."
 }
 
+run_ghosts() {
+    local old_arg="${1:-}"
+    local new_arg="${2:-}"
+
+    title "Forensic ghost diff between two parsed snapshots"
+
+    # Normalise either a tg_*/ root or a parsed_data/ dir to a parsed_data path.
+    _resolve_parsed() {
+        local p="$1"
+        if [[ -d "$p/parsed_data" ]]; then
+            echo "$p/parsed_data"
+        elif [[ -d "$p/tg_"*/parsed_data ]]; then
+            # The double-nested tg_*/tg_*/ layout that tg-backup.sh produces.
+            for inner in "$p"/tg_*/parsed_data; do [[ -d "$inner" ]] && { echo "$inner"; return; }; done
+        else
+            echo "$p"
+        fi
+    }
+
+    local old_parsed new_parsed
+    if [[ -n "$old_arg" && -n "$new_arg" ]]; then
+        old_parsed=$(_resolve_parsed "$old_arg")
+        new_parsed=$(_resolve_parsed "$new_arg")
+    else
+        # Auto-pick the two newest parsed_data dirs under the script root.
+        local -a found=()
+        while IFS= read -r p; do found+=("$p"); done < <(
+            find "$SCRIPT_DIR" -maxdepth 3 -type d -name parsed_data 2>/dev/null | \
+                xargs -I {} stat -f "%m %N" {} 2>/dev/null | sort -rn | awk '{print $2}'
+        )
+        if (( ${#found[@]} < 2 )); then
+            die "Need at least two parsed_data snapshots; found ${#found[@]}. Pass paths explicitly: $0 ghosts <old> <new>"
+        fi
+        new_parsed="${found[0]}"
+        old_parsed="${found[1]}"
+    fi
+
+    [[ -d "$old_parsed" ]] || die "Old parsed_data not found: $old_parsed"
+    [[ -d "$new_parsed" ]] || die "New parsed_data not found: $new_parsed"
+
+    log "Old: $(_redact_path "$old_parsed")"
+    log "New: $(_redact_path "$new_parsed")"
+
+    local out="$SCRIPT_DIR/ghosts_diff.json"
+    (cd "$SCRIPT_DIR/apps" && python3 -c "
+import json, sys
+sys.path.insert(0, '.')
+from tool import ghost_detector
+from pathlib import Path
+result = ghost_detector.compare_snapshots(Path('$old_parsed'), Path('$new_parsed'))
+with open('$out', 'w') as f:
+    json.dump(result, f, indent=2, ensure_ascii=False)
+print()
+for acc, d in result['diffs'].items():
+    print(f'  {acc}: removed={len(d[\"removed\"])}  added={len(d[\"added\"])}  modified={len(d[\"modified\"])}')
+")
+    ok "Diff written to: $(_redact_path "$out")"
+}
+
 run_full_workflow() {
     local dest_dir="${1:-./tg_$(date +"%Y-%m-%d_%H-%M-%S")}"
     
@@ -552,6 +614,10 @@ main() {
             ;;
         clean)
             run_clean
+            ;;
+        ghosts)
+            check_dependencies
+            run_ghosts "${2:-}" "${3:-}"
             ;;
         help|--help|-h)
             show_help
