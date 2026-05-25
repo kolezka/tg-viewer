@@ -24,6 +24,8 @@ Legacy pipeline (`apps/tool/extract-keys.sh` + `apps/tool/tg_decrypt.py`) still 
 | `apps/tool/postbox_parser.py` | Parse Postbox binary format, extract messages/peers/conversations |
 | `apps/tool/redact.py` | Console output redaction helpers |
 | `apps/api/` | FastAPI backend package — `python -m api` (with `cwd=apps/`); mounts `apps/web/dist/` via StaticFiles |
+| `apps/api/routers/` | Per-resource routers — `chats`, `messages`, `media`, `users`, `stats`, `databases`, `export_data` |
+| `apps/api/tests/` | Pytest suite (FastAPI + peer/postbox unit tests) |
 | `apps/web/` | React + Bun frontend (TanStack Query, Tailwind, OpenAPI codegen) — `bun run dev` for HMR; `bun run build` → `apps/web/dist/` |
 | `apps/tool/extract-keys.sh` | Extract keys from Keychain (legacy) |
 | `apps/tool/tg_decrypt.py` | Legacy decryptor (tries multiple key formats) |
@@ -31,6 +33,9 @@ Legacy pipeline (`apps/tool/extract-keys.sh` + `apps/tool/tg_decrypt.py`) still 
 ## Development commands
 
 ```bash
+# First-time setup: creates .venv/, installs Python deps, bun install + build
+./tg-viewer setup && source .venv/bin/activate
+
 # Full workflow (backup + decrypt + parse + web UI)
 ./tg-viewer full
 
@@ -40,8 +45,24 @@ Legacy pipeline (`apps/tool/extract-keys.sh` + `apps/tool/tg_decrypt.py`) still 
 ./tg-viewer parse ./data/tg_*/
 ./tg-viewer webui ./data/tg_*/parsed_data
 
+# Two-process dev stack: FastAPI on :5000 + Bun HMR on :5173 (with API proxy)
+./tg-viewer dev ./data/tg_*/parsed_data
+
 # Cleanup generated data
 ./tg-viewer clean
+```
+
+Useful flags (apply to `decrypt`/`parse`/`webui`/`full`): `--account ID|NAME`
+(scope to one account — accepts `account-{id}`, bare numeric id, or peerName
+from `accounts-shared-data`), `--redact` (mask IDs/keys/paths in CLI output),
+`--port`, `--host`.
+
+## Tests
+
+```bash
+pytest                                       # backend (paths set in pyproject.toml → apps/api/tests)
+cd apps/web && bun run typecheck             # frontend TS check
+cd apps/web && bun run codegen               # regenerate OpenAPI types from running API
 ```
 
 ## Technical notes
