@@ -354,18 +354,25 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
         pos = idx + 11
 
     # --- Form 2: Bytes-blob form (i Bytes 0x0c) ---
-    # Pattern: 01 69 0a 0c <dc_id 4 BE> <4b pad> <file_id 8 LE>
-    # Total 19 bytes after the marker's last byte.
+    # Pattern: 01 69 0a 0c <dc_id 4 BE> <3b pad> <file_id 8 LE>
+    # The file_id is *signed* int64 — outgoing secret-chat local refs use
+    # negative ids (e.g. -1155884980421330152 → local-file--1155884980421330152
+    # on disk). Verified empirically against:
+    #   • xan-lover incoming `secret-file-5809961205153930870-4`
+    #   • czarnetlo outgoing `local-file--1155884980421330152`
+    # Earlier versions read file_id at idx+12, which is off by one and yielded
+    # nonsense ids that never matched disk — the incoming xan-lover case still
+    # worked only because Form 1 (`01 69 01`) also fired with the right id.
     pos = 0
-    while pos < len(value) - 19:
+    while pos < len(value) - 18:
         idx = value.find(b'\x01\x69\x0a\x0c', pos)
         if idx < 0:
             break
-        if idx + 20 > len(value):
+        if idx + 19 > len(value):
             break
         try:
             dc_id = struct.unpack('>I', value[idx + 4:idx + 8])[0]
-            file_id = struct.unpack('<q', value[idx + 12:idx + 20])[0]
+            file_id = struct.unpack('<q', value[idx + 11:idx + 19])[0]
         except struct.error:
             pos = idx + 4
             continue
@@ -386,15 +393,21 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
 def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, Any]]:
     """Resolve media refs to actual filenames on disk.
 
-    Telegram caches media under three different naming schemes depending on
-    where it came from:
+    Telegram caches media under four naming schemes depending on origin:
       • `telegram-cloud-photo-size-{dc}-{fid}-{suffix}` — multi-size cloud photos
       • `telegram-cloud-document-{dc}-{fid}`           — cloud documents
       • `secret-file-{fid}-{dc}[.ext]`                 — secret-chat E2E media
+                                                        (incoming from peer)
+      • `local-file-{fid}` / `local-file--{abs}`       — outgoing photos before
+                                                        upload completes (and
+                                                        often kept after); the
+                                                        signed file_id appears
+                                                        as `local-file--<abs>`
+                                                        when negative
 
     Secret chat media uses a flipped dc/fid order and an optional extension
     suffix (`.jpg`, `.mp3`, etc.). We try each scheme in turn; if dc_id was
-    not pinned during extraction we sweep DCs 1..10.
+    not pinned during extraction we sweep DCs 1..10. local-file is dc-less.
     """
     resolved = []
     photo_suffixes = ['y', 'x', 'w', 'm', 'c', 's', 'a', 'b']
@@ -416,6 +429,16 @@ def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, An
                 return cand
         return None
 
+    def _try_local(fid):
+        # Outgoing local files don't use dc_id. Negative ids are rendered
+        # with a double dash because the dash is both a separator and part
+        # of the negative sign: local-file--1155884980421330152.
+        if fid < 0:
+            cand = f"local-file--{abs(fid)}"
+        else:
+            cand = f"local-file-{fid}"
+        return cand if cand in media_index else None
+
     for ref in refs:
         fid = ref['file_id']
         dc = ref.get('dc_id', 0)
@@ -426,6 +449,9 @@ def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, An
                 matched = _try_dc(fid, try_dc)
                 if matched:
                     break
+
+        if not matched:
+            matched = _try_local(fid)
 
         if matched:
             entry = dict(ref)
