@@ -199,6 +199,23 @@ if [[ -d "$APPSTORE_DIR/accounts-metadata" ]]; then
   fi
 fi
 
+# 2b. Copy logs/ — Telegram's MTProto debug logs. Forensic gold: each
+# Update.updateNewEncryptedMessage line records file_id + accessHash +
+# size + dcId + keyFingerprint even for messages that were later
+# deleted from t7. Without these we can't even prove a deleted secret
+# message existed (the bytes themselves are truncated as "..." in the
+# log, but the metadata is intact). Telegram rotates logs at ~1 MB,
+# so they vanish quickly — back them up while you can.
+if [[ -d "$APPSTORE_DIR/logs" ]]; then
+  log "Copying Telegram MTProto logs..."
+  mkdir -p "$BACKUP_DIR/logs"
+  rsync "${RSYNC_OPTS[@]}" "$APPSTORE_DIR/logs/" "$BACKUP_DIR/logs/" || rc=$?
+  if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
+    die "rsync failed with exit code ${rc:-0}"
+  fi
+  ok "  logs copied ($(du -sh "$BACKUP_DIR/logs" 2>/dev/null | cut -f1))"
+fi
+
 # 3. For each account: copy postbox DB (messages) + cached files
 for d in "${ACCOUNT_DIRS[@]}"; do
   dir_name=$(basename "$d")
