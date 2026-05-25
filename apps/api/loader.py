@@ -48,6 +48,11 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
         if isinstance(ghosts_history, list):
             ghosts_history = {}
 
+        from tool import forensics
+        forensic_index = forensics.build_forensic_index(
+            storage_catalog, log_events, messages, account_id=account_id
+        )
+
         databases[account_id] = {
             "decrypted": True,
             "messages": messages,
@@ -58,6 +63,7 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
             "storage_catalog": storage_catalog,
             "log_events": log_events,
             "ghosts_history": ghosts_history,
+            "forensic_index": forensic_index,
             "schema": {"tables": ["t2 (peers)", "t7 (messages)"]},
         }
 

@@ -41,12 +41,38 @@ export const api = {
   } = {}) => request<Schemas["MediaPage"]>(`/api/media?${qs(params)}`),
   mediaUrl: (account: string, filename: string) =>
     `/api/media/${encodeURIComponent(account)}/${encodeURIComponent(filename)}`,
+  storage: (params: {
+    tombstone_only?: boolean;
+    source?: string;
+    search?: string;
+    page?: number;
+    per_page?: number;
+  } = {}) => request<Schemas["StoragePage"]>(`/api/storage?${qs(params)}`),
+  logs: (params: {
+    event_type?: string;
+    ghost_only?: boolean;
+    peer_id?: string;
+    account?: string;
+    search?: string;
+    page?: number;
+    per_page?: number;
+  } = {}) => request<Schemas["LogEventPage"]>(`/api/logs?${qs(params)}`),
+  forensics: (params: {
+    tombstone_only?: boolean;
+    with_message?: boolean;
+    with_log?: boolean;
+    account?: string;
+    search?: string;
+    page?: number;
+    per_page?: number;
+  } = {}) => request<Schemas["ForensicPage"]>(`/api/forensics?${qs(params)}`),
 };
 
-function qs(params: Record<string, string | number | undefined>): string {
+function qs(params: Record<string, string | number | boolean | undefined>): string {
   const u = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
-    if (v !== undefined && v !== "") u.set(k, String(v));
+    if (v === undefined || v === "" || v === false) continue;
+    u.set(k, String(v));
   }
   return u.toString();
 }

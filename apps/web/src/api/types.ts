@@ -123,6 +123,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Storage */
+        get: operations["list_storage_api_storage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/stats": {
         parameters: {
             query?: never;
@@ -149,6 +166,57 @@ export interface paths {
         };
         /** Get Export Data */
         get: operations["get_export_data_api_export_data_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Log Events */
+        get: operations["list_log_events_api_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ghosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Ghosts */
+        get: operations["list_ghosts_api_ghosts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forensics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Forensics */
+        get: operations["list_forensics_api_forensics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -249,10 +317,218 @@ export interface components {
              */
             backup_size: string;
         };
+        /** ForensicEntry */
+        ForensicEntry: {
+            /** File Id */
+            file_id: number;
+            /**
+             * Filenames
+             * @default []
+             */
+            filenames: string[];
+            /** Size Bytes */
+            size_bytes?: number | null;
+            /**
+             * On Disk
+             * @default false
+             */
+            on_disk: boolean;
+            /**
+             * Tombstone
+             * @default false
+             */
+            tombstone: boolean;
+            /**
+             * Sources
+             * @default []
+             */
+            sources: string[];
+            log_event?: components["schemas"]["ForensicLog"] | null;
+            message?: components["schemas"]["ForensicMessage"] | null;
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+        };
+        /** ForensicLog */
+        ForensicLog: {
+            /** Dcid */
+            dcId?: number | null;
+            /** Accesshash */
+            accessHash?: number | null;
+            /** Size */
+            size?: number | null;
+            /** Keyfingerprint */
+            keyFingerprint?: number | null;
+            /** Chatid */
+            chatId?: number | null;
+            /** Date */
+            date?: number | null;
+            /**
+             * Source File
+             * @default
+             */
+            source_file: string;
+            /**
+             * Source Line
+             * @default 0
+             */
+            source_line: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** ForensicMessage */
+        ForensicMessage: {
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+            /** Peer Id */
+            peer_id?: number | null;
+            /** Peer Name */
+            peer_name?: string | null;
+            /** Timestamp */
+            timestamp?: number | null;
+            /** Date */
+            date?: string | null;
+            /** Outgoing */
+            outgoing?: boolean | null;
+        };
+        /** ForensicPage */
+        ForensicPage: {
+            /** Items */
+            items: components["schemas"]["ForensicEntry"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+        };
+        /**
+         * GhostEntry
+         * @description One message that diverged between two parsed_data snapshots.
+         */
+        GhostEntry: {
+            /** Peer Id */
+            peer_id?: number | null;
+            /** Peer Name */
+            peer_name?: string | null;
+            /** Timestamp */
+            timestamp?: number | null;
+            /** Date */
+            date?: string | null;
+            /**
+             * Text
+             * @default
+             */
+            text: string;
+            /**
+             * Media
+             * @default []
+             */
+            media: {
+                [key: string]: unknown;
+            }[];
+            /** Outgoing */
+            outgoing?: boolean | null;
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** GhostPage */
+        GhostPage: {
+            /** Items */
+            items: components["schemas"]["GhostEntry"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Kind */
+            kind: string;
+            /** Previous Snapshot */
+            previous_snapshot?: string | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * LogEvent
+         * @description One forensic event extracted from a Telegram macOS debug log.
+         *
+         *     Shape mirrors `tool.log_parser`'s record format. `data` is event-specific
+         *     so we leave it flexible. `in_db` + `db_match` are populated only for
+         *     `encrypted_message` events; `account` is added at API serialization time.
+         */
+        LogEvent: {
+            /** Event */
+            event: string;
+            /**
+             * Source File
+             * @default
+             */
+            source_file: string;
+            /**
+             * Source Line
+             * @default 0
+             */
+            source_line: number;
+            /**
+             * Log Timestamp
+             * @default
+             */
+            log_timestamp: string;
+            /**
+             * Data
+             * @default {}
+             */
+            data: {
+                [key: string]: unknown;
+            };
+            /** In Db */
+            in_db?: boolean | null;
+            /** Db Match */
+            db_match?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** LogEventPage */
+        LogEventPage: {
+            /** Events */
+            events: components["schemas"]["LogEvent"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Total Pages */
+            total_pages: number;
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
         };
         /** MediaItem */
         MediaItem: {
@@ -360,6 +636,44 @@ export interface components {
             message_count: number;
             /** Tables */
             tables: number;
+        };
+        /** StorageEntry */
+        StorageEntry: {
+            /** Filename */
+            filename: string;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /**
+             * Source
+             * @default
+             */
+            source: string;
+            /**
+             * On Disk
+             * @default true
+             */
+            on_disk: boolean;
+            /** Absolute Path */
+            absolute_path?: string | null;
+            /**
+             * Account
+             * @default
+             */
+            account: string;
+        };
+        /** StoragePage */
+        StoragePage: {
+            /** Items */
+            items: components["schemas"]["StorageEntry"][];
+            /** Total */
+            total: number;
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
         };
         /** User */
         User: {
@@ -634,6 +948,41 @@ export interface operations {
             };
         };
     };
+    list_storage_api_storage_get: {
+        parameters: {
+            query?: {
+                tombstone_only?: boolean;
+                source?: string;
+                search?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StoragePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_stats_api_stats_get: {
         parameters: {
             query?: never;
@@ -670,6 +1019,120 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ExportData"];
+                };
+            };
+        };
+    };
+    list_log_events_api_logs_get: {
+        parameters: {
+            query?: {
+                /** @description Filter to one event type (e.g. encrypted_message) */
+                event_type?: string;
+                /** @description Only encrypted_message events with no matching t7 row */
+                ghost_only?: boolean;
+                /** @description Filter encrypted_message / pending_removed by peer_id (comma-separated) */
+                peer_id?: string;
+                /** @description Restrict to one account-{id} */
+                account?: string;
+                /** @description Substring match against the event's source_file + data dict */
+                search?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogEventPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_ghosts_api_ghosts_get: {
+        parameters: {
+            query?: {
+                account?: string;
+                kind?: string;
+                search?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GhostPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_forensics_api_forensics_get: {
+        parameters: {
+            query?: {
+                tombstone_only?: boolean;
+                with_message?: boolean;
+                with_log?: boolean;
+                account?: string;
+                search?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForensicPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

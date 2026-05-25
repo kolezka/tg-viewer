@@ -134,6 +134,47 @@ class GhostPage(BaseModel):
     previous_snapshot: str | None = None
 
 
+class ForensicLog(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    dcId: int | None = None
+    accessHash: int | None = None
+    size: int | None = None
+    keyFingerprint: int | None = None
+    chatId: int | None = None
+    date: int | None = None
+    source_file: str = ""
+    source_line: int = 0
+
+
+class ForensicMessage(BaseModel):
+    account: str = ""
+    peer_id: int | None = None
+    peer_name: str | None = None
+    timestamp: int | None = None
+    date: str | None = None
+    outgoing: bool | None = None
+
+
+class ForensicEntry(BaseModel):
+    file_id: int
+    filenames: list[str] = []
+    size_bytes: int | None = None
+    on_disk: bool = False
+    tombstone: bool = False
+    sources: list[str] = []
+    log_event: ForensicLog | None = None
+    message: ForensicMessage | None = None
+    account: str = ""
+
+
+class ForensicPage(BaseModel):
+    items: list[ForensicEntry]
+    total: int
+    page: int
+    per_page: int
+    counts: dict[str, int]
+
+
 class StatsDb(BaseModel):
     decrypted: bool
     message_count: int

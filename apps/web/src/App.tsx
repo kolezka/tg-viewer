@@ -6,6 +6,8 @@ import ChatsTab from "./components/ChatsTab";
 import MessagesTab from "./components/MessagesTab";
 import UsersTab from "./components/UsersTab";
 import MediaTab from "./components/MediaTab";
+import TombstonesTab from "./components/TombstonesTab";
+import LogEventsTab from "./components/LogEventsTab";
 
 export default function App() {
   const [active, setActive] = useState<TabKey>("messages");
@@ -34,6 +36,8 @@ export default function App() {
           {active === "messages" && <MessagesTab />}
           {active === "users" && <UsersTab onUserClick={handleUserClick} />}
           {active === "media" && <MediaTab />}
+          {active === "tombstones" && <TombstonesTab />}
+          {active === "events" && <LogEventsTab />}
         </div>
       </div>
     </div>

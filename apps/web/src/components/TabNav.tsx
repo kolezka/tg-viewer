@@ -1,9 +1,19 @@
-export type TabKey = "stats" | "databases" | "chats" | "messages" | "users" | "media";
+export type TabKey =
+  | "stats"
+  | "databases"
+  | "chats"
+  | "messages"
+  | "users"
+  | "media"
+  | "tombstones"
+  | "events";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "messages", label: "Messages" },
   { key: "chats", label: "Chats" },
   { key: "media", label: "Media" },
+  { key: "tombstones", label: "Tombstones" },
+  { key: "events", label: "Log Events" },
   { key: "users", label: "Users" },
   { key: "databases", label: "Databases" },
   { key: "stats", label: "Overview" },

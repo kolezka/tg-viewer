@@ -18,3 +18,12 @@ export const useMessages = (params: Parameters<typeof api.messages>[0] = {}) =>
 
 export const useMedia = (params: Parameters<typeof api.media>[0] = {}) =>
   useQuery({ queryKey: ["media", params], queryFn: () => api.media(params) });
+
+export const useStorage = (params: Parameters<typeof api.storage>[0] = {}) =>
+  useQuery({ queryKey: ["storage", params], queryFn: () => api.storage(params) });
+
+export const useLogs = (params: Parameters<typeof api.logs>[0] = {}) =>
+  useQuery({ queryKey: ["logs", params], queryFn: () => api.logs(params) });
+
+export const useForensics = (params: Parameters<typeof api.forensics>[0] = {}) =>
+  useQuery({ queryKey: ["forensics", params], queryFn: () => api.forensics(params) });
