@@ -40,7 +40,7 @@ def create_app(data_dir: str | Path | None = None, account: str | None = None) -
 
     # API routers FIRST. The order matters because StaticFiles(html=True) below
     # is a catch-all that swallows any unmatched path.
-    from api.routers import databases, users, chats, messages, media, stats, export_data
+    from api.routers import databases, users, chats, messages, media, stats, export_data, logs
     app.include_router(databases.router)
     app.include_router(users.router)
     app.include_router(chats.router)
@@ -48,6 +48,7 @@ def create_app(data_dir: str | Path | None = None, account: str | None = None) -
     app.include_router(media.router)
     app.include_router(stats.router)
     app.include_router(export_data.router)
+    app.include_router(logs.router)
 
     # Mount the React bundle at /. If apps/web/dist/ is missing (e.g., in a fresh
     # CI checkout or direct `python -m api` without a build), surface a clear

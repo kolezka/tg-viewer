@@ -110,6 +110,33 @@ class Stats(BaseModel):
     databases: dict[str, StatsDb]
 
 
+class LogEvent(BaseModel):
+    """One forensic event extracted from a Telegram macOS debug log.
+
+    Shape mirrors `tool.log_parser`'s record format. `data` is event-specific
+    so we leave it flexible. `in_db` + `db_match` are populated only for
+    `encrypted_message` events; `account` is added at API serialization time.
+    """
+    model_config = ConfigDict(extra="allow")
+    event: str
+    source_file: str = ""
+    source_line: int = 0
+    log_timestamp: str = ""
+    data: dict[str, Any] = {}
+    in_db: bool | None = None
+    db_match: dict[str, Any] | None = None
+    account: str = ""
+
+
+class LogEventPage(BaseModel):
+    events: list[LogEvent]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+    counts: dict[str, int]
+
+
 class ExportData(BaseModel):
     accounts: list[Any] = []
     databases: dict[str, Any] = {}

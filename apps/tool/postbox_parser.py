@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
 from . import redact
+from . import log_parser
 
 
 def parse_peer_from_t2(key: int, value: bytes) -> Optional[Dict[str, Any]]:
@@ -723,9 +724,20 @@ def parse_messages_from_fts(conn) -> List[Dict[str, Any]]:
 
 
 def export_account(
-    conn, account_id: str, output_dir: Path, backup_dir: Optional[Path] = None
+    conn,
+    account_id: str,
+    output_dir: Path,
+    backup_dir: Optional[Path] = None,
+    log_events: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Export all data from one account database."""
+    """Export all data from one account database.
+
+    `log_events` is the pre-parsed output of `log_parser.parse_logs_dir`
+    against `<backup>/logs/`. Logs are shared across the whole backup, but
+    cross-reference is per-account (we match each `encrypted_message`
+    against the account's own t7 dump), so we accept the raw list here and
+    deep-copy + annotate inside.
+    """
     account_dir = output_dir / f"account-{account_id}"
     account_dir.mkdir(parents=True, exist_ok=True)
 
@@ -771,6 +783,27 @@ def export_account(
     if messages_t7:
         with open(account_dir / 'messages.json', 'w', encoding='utf-8') as f:
             json.dump(messages_t7, f, indent=2, ensure_ascii=False)
+
+    # Step 2b: Cross-reference forensic log events against this account's t7.
+    # Logs are shared across the backup so we receive them pre-parsed; the
+    # cross-reference is per-account because only the local t7 rows tell us
+    # whether a message survived. Deep-copy the event dicts before annotating
+    # so a second account doesn't inherit the first account's `in_db` flags.
+    if log_events is not None:
+        per_account_events = [dict(ev) for ev in log_events]
+        log_parser.cross_reference_with_messages(per_account_events, messages_t7)
+        with open(account_dir / 'log_events.json', 'w', encoding='utf-8') as f:
+            json.dump(per_account_events, f, indent=2, ensure_ascii=False)
+        ghosts = sum(
+            1 for ev in per_account_events
+            if ev['event'] == 'encrypted_message' and ev.get('in_db') is False
+        )
+        print(
+            f"    Log events: {len(per_account_events)} "
+            f"({ghosts} ghost messages flagged)"
+        )
+        result['log_events'] = len(per_account_events)
+        result['ghost_messages'] = ghosts
 
     # Step 3: Parse FTS messages
     print("  Parsing full-text search index (ft41)...")
@@ -951,6 +984,17 @@ def main():
         print("No account directories found")
         sys.exit(1)
 
+    # Pre-parse logs once per backup (logs are at backup root, not per-account).
+    log_events: Optional[List[Dict[str, Any]]] = None
+    logs_dir = backup_dir / "logs"
+    if logs_dir.is_dir():
+        print(f"\nParsing forensic logs from {redact.path(logs_dir)}...")
+        log_events = log_parser.parse_logs_dir(logs_dir)
+        counts = log_parser.summarize(log_events)
+        counts.pop('__ghosts__', None)
+        breakdown = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+        print(f"  {len(log_events)} log events ({breakdown})")
+
     results = {}
 
     for account_dir in account_dirs:
@@ -971,7 +1015,9 @@ def main():
 
         try:
             conn = open_database(str(db_path), db_key, db_salt)
-            result = export_account(conn, account_id, output_dir, backup_dir)
+            result = export_account(
+                conn, account_id, output_dir, backup_dir, log_events=log_events
+            )
             results[account_id] = result
             conn.close()
         except Exception as e:
