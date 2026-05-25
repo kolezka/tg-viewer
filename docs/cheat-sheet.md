@@ -386,9 +386,13 @@ Telegram writes continuously, so partial-source errors are normal:
 | 23 | Partial transfer | Ignore |
 | 24 | Source vanished mid-copy | Ignore |
 
-Always exclude: `*_partial.*`, `*.lock`, `*-journal`, `*-shm`, `*-wal`.
+Exclude only `*_partial.*` (transient download metadata). **Keep `-wal` and
+`-shm`** — SQLCipher runs in WAL mode and the most recent writes (new
+messages, secret-chat tombstones, media refs) live in `db_sqlite-wal`
+until a checkpoint merges them. Dropping the WAL silently loses the last
+few megabytes of activity, including photos deleted seconds before backup.
 
-Ref: `apps/tool/tg-backup.sh:29-45`.
+Ref: `apps/tool/tg-backup.sh:27-45`.
 
 ---
 

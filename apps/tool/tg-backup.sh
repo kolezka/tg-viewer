@@ -31,17 +31,17 @@ BACKUP_DIR="$DEST/tg_$TIMESTAMP"
 # --exclude '*_partial.*'  : Telegram writes per-download metadata files
 #                    (e.g. *.meta, *.partial) that mutate while the app is
 #                    running and aren't useful to back up.
-# --exclude '*.lock' / '*-journal' / '*-shm' / '*-wal' : SQLite live-state
-#                    files. The decryptor opens its own connection; these
-#                    transients are noise and frequently flap mid-rsync.
+#
+# IMPORTANT: do NOT exclude '*-wal' / '*-shm' / '*-journal'. Telegram's
+# SQLCipher DB runs in WAL mode and keeps recent writes (new messages,
+# secret-chat tombstones, media references) in the -wal file until a
+# checkpoint merges them into the main DB. Skipping the WAL silently
+# drops the last few minutes / megabytes of activity — exactly the
+# rows we want when backing up immediately after a deletion.
 RSYNC_OPTS=(
   -a
   --ignore-errors
   --exclude='*_partial.*'
-  --exclude='*.lock'
-  --exclude='*-journal'
-  --exclude='*-shm'
-  --exclude='*-wal'
 )
 if [[ "$BATCH_MODE" == false ]]; then
   RSYNC_OPTS+=(--progress)
