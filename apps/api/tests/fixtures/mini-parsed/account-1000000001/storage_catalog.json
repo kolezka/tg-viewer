@@ -1,0 +1,5 @@
+[
+  {"filename": "secret-file-111-4", "size_bytes": 1000, "source": "storage", "on_disk": true, "absolute_path": null},
+  {"filename": "secret-file-333-4", "size_bytes": 73900, "source": "storage", "on_disk": false, "absolute_path": null},
+  {"filename": "/abs/path/cached-blob", "size_bytes": 5000, "source": "cache-storage", "on_disk": false, "absolute_path": "/abs/path/cached-blob"}
+]

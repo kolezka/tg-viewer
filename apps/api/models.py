@@ -96,6 +96,22 @@ class MediaPage(BaseModel):
     counts: dict[str, int]
 
 
+class StorageEntry(BaseModel):
+    filename: str
+    size_bytes: int = 0
+    source: str = ""
+    on_disk: bool = True
+    absolute_path: str | None = None
+    account: str = ""
+
+
+class StoragePage(BaseModel):
+    items: list[StorageEntry]
+    total: int
+    page: int
+    per_page: int
+
+
 class StatsDb(BaseModel):
     decrypted: bool
     message_count: int

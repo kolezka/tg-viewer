@@ -40,6 +40,7 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
         conversations = _read("conversations_index.json")
         messages_fts = _read("messages_fts.json")
         media_catalog = _read("media_catalog.json")
+        storage_catalog = _read("storage_catalog.json")
         log_events = _read("log_events.json")
 
         databases[account_id] = {
@@ -49,14 +50,18 @@ def load_parsed_data(data_dir: Path, account: str | None = None) -> dict[str, An
             "peers": peers,
             "conversations": conversations,
             "media_catalog": media_catalog,
+            "storage_catalog": storage_catalog,
             "log_events": log_events,
             "schema": {"tables": ["t2 (peers)", "t7 (messages)"]},
         }
 
+        tombstones = sum(1 for e in storage_catalog if not e.get("on_disk"))
         print(
             f"  {account_id}: {len(messages)} messages, {len(peers)} peers, "
             f"{len(conversations)} conversations, {len(messages_fts)} fts, "
-            f"{len(media_catalog)} media, {len(log_events)} log events"
+            f"{len(media_catalog)} media, "
+            f"{len(storage_catalog)} storage ({tombstones} tombstones), "
+            f"{len(log_events)} log events"
         )
 
     return {"databases": databases}

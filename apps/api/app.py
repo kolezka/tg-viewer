@@ -40,12 +40,13 @@ def create_app(data_dir: str | Path | None = None, account: str | None = None) -
 
     # API routers FIRST. The order matters because StaticFiles(html=True) below
     # is a catch-all that swallows any unmatched path.
-    from api.routers import databases, users, chats, messages, media, stats, export_data, logs
+    from api.routers import databases, users, chats, messages, media, stats, export_data, logs, storage
     app.include_router(databases.router)
     app.include_router(users.router)
     app.include_router(chats.router)
     app.include_router(messages.router)
     app.include_router(media.router)
+    app.include_router(storage.router)
     app.include_router(stats.router)
     app.include_router(export_data.router)
     app.include_router(logs.router)

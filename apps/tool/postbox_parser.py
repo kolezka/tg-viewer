@@ -824,6 +824,23 @@ def export_account(
                 json.dump(catalog, f, indent=2, ensure_ascii=False)
         result['media_files'] = len(catalog)
 
+    # Step 3c: Build storage catalog (plaintext sidecar DBs — surfaces tombstones)
+    if backup_dir is not None:
+        from .storage_db_parser import build_storage_catalog
+        src_account_dir = backup_dir / f"account-{account_id}"
+        try:
+            storage_catalog = build_storage_catalog(src_account_dir, media_dir or Path())
+        except Exception as e:
+            print(f"    Storage catalog error: {e}")
+            storage_catalog = []
+        if storage_catalog:
+            with open(account_dir / 'storage_catalog.json', 'w', encoding='utf-8') as f:
+                json.dump(storage_catalog, f, indent=2, ensure_ascii=False)
+        tombstones = sum(1 for e in storage_catalog if not e.get('on_disk'))
+        print(f"    Storage catalog: {len(storage_catalog)} entries ({tombstones} tombstones)")
+        result['storage_entries'] = len(storage_catalog)
+        result['storage_tombstones'] = tombstones
+
     # Step 4: Create combined export, deduping FTS entries that already exist in t7.
     # Key on (peer_id, text) so identical replies in different chats are kept distinct.
     seen = {(m.get('peer_id'), m.get('text', '')) for m in messages_t7 if m.get('text')}
