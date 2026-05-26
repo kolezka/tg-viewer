@@ -452,82 +452,136 @@ run_watcher() {
     (cd "$SCRIPT_DIR/apps" && "$SCRIPT_DIR/.venv/bin/python3" -m tool.tg_watcher --vault "$vault_dir")
 }
 
-# Launchd plist installation. The plist points at the venv's python so the
-# daemon doesn't need PATH wrangling under launchd's stripped environment.
+# Launchd plist installation. We DON'T point launchd at python directly —
+# Homebrew python has unstable ad-hoc signing that TCC refuses to remember
+# consent for, so every restart re-prompts "python3.14 would like to access
+# data from other apps". Instead we wrap each daemon in a properly named,
+# code-signed .app bundle. The bundle has a stable CFBundleIdentifier +
+# ad-hoc CDHash, so TCC remembers consent and propagates it to the child
+# python process. Side benefit: in System Settings the entries show up as
+# "TG Capture Daemon" / "TG Capture Watcher" instead of generic python3.14.
 _plist_path() {
     echo "$HOME/Library/LaunchAgents/com.tg-viewer.$1.plist"
 }
 
-_write_plist_daemon() {
-    cat > "$1" <<EOF
+# Build a .app bundle wrapper at $1 (path), with bundle id $2, exec'ing $3 ($4..)
+_build_app_bundle() {
+    local app_path="$1" bundle_id="$2" display_name="$3"
+    shift 3
+    local exec_args=("$@")
+
+    rm -rf "$app_path"
+    mkdir -p "$app_path/Contents/MacOS"
+
+    # CFBundleExecutable is the launcher script's basename; Info.plist needs
+    # to match exactly or LaunchServices refuses the bundle.
+    cat > "$app_path/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.tg-viewer.daemon</string>
-  <key>WorkingDirectory</key><string>$SCRIPT_DIR/apps</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>$SCRIPT_DIR/.venv/bin/python3</string>
-    <string>-m</string><string>tool.tg_daemon</string>
-    <string>--repo</string><string>$SCRIPT_DIR</string>
-    <string>--dest</string><string>$DEFAULT_DAEMON_DEST</string>
-    <string>--interval</string><string>300</string>
-  </array>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/tg-viewer-daemon.log</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/tg-viewer-daemon.log</string>
+  <key>CFBundleIdentifier</key><string>$bundle_id</string>
+  <key>CFBundleExecutable</key><string>launcher</string>
+  <key>CFBundleName</key><string>$display_name</string>
+  <key>CFBundleDisplayName</key><string>$display_name</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1.0</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>LSUIElement</key><true/>
+  <key>LSBackgroundOnly</key><true/>
 </dict>
 </plist>
 EOF
+
+    # The launcher is the .app's executable. It just execs python with our
+    # args; TCC permissions granted to this bundle propagate to the child.
+    {
+        echo '#!/bin/bash'
+        echo "exec '$SCRIPT_DIR/.venv/bin/python3' \\"
+        for a in "${exec_args[@]}"; do
+            printf "    '%s' \\\\\n" "$a"
+        done
+        # Trailing line: trim the dangling backslash with a no-op
+        echo '    "$@"'
+    } > "$app_path/Contents/MacOS/launcher"
+    chmod +x "$app_path/Contents/MacOS/launcher"
+
+    # Ad-hoc sign the bundle. `--deep --force` ensures the CDHash is stable
+    # for this exact file content; rebuilding the same files produces the
+    # same hash, which is what TCC remembers consent against.
+    codesign --force --deep --sign - "$app_path" 2>&1 | head -3
 }
 
-_write_plist_watcher() {
-    cat > "$1" <<EOF
+_write_plist_for_bundle() {
+    local plist="$1" label="$2" app_path="$3" log_file="$4"
+    cat > "$plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.tg-viewer.watcher</string>
+  <key>Label</key><string>$label</string>
   <key>WorkingDirectory</key><string>$SCRIPT_DIR/apps</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$SCRIPT_DIR/.venv/bin/python3</string>
-    <string>-m</string><string>tool.tg_watcher</string>
-    <string>--vault</string><string>$DEFAULT_VAULT_DIR</string>
+    <string>$app_path/Contents/MacOS/launcher</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$HOME/Library/Logs/tg-viewer-watcher.log</string>
-  <key>StandardErrorPath</key><string>$HOME/Library/Logs/tg-viewer-watcher.log</string>
+  <key>StandardOutPath</key><string>$log_file</string>
+  <key>StandardErrorPath</key><string>$log_file</string>
 </dict>
 </plist>
 EOF
 }
 
 run_install_launchd() {
-    title "Installing launchd agents"
+    title "Installing launchd agents (via code-signed .app bundles)"
     [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]] || die ".venv missing — run ./tg-viewer setup first"
 
     mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+    local bundles_dir="$SCRIPT_DIR/apps/launchd-bundles"
+    mkdir -p "$bundles_dir"
+
+    local daemon_app="$bundles_dir/TG Capture Daemon.app"
+    local watcher_app="$bundles_dir/TG Capture Watcher.app"
+
+    log "Building $daemon_app..."
+    _build_app_bundle "$daemon_app" "dev.tg-viewer.daemon" "TG Capture Daemon" \
+        -m tool.tg_daemon \
+        --repo "$SCRIPT_DIR" \
+        --dest "$DEFAULT_DAEMON_DEST" \
+        --interval 300
+    ok "  built + signed"
+
+    log "Building $watcher_app..."
+    _build_app_bundle "$watcher_app" "dev.tg-viewer.watcher" "TG Capture Watcher" \
+        -m tool.tg_watcher \
+        --vault "$DEFAULT_VAULT_DIR"
+    ok "  built + signed"
 
     local d_plist=$(_plist_path daemon)
     local w_plist=$(_plist_path watcher)
-    _write_plist_daemon  "$d_plist"
-    _write_plist_watcher "$w_plist"
+    _write_plist_for_bundle "$d_plist" "com.tg-viewer.daemon"  "$daemon_app"  "$HOME/Library/Logs/tg-viewer-daemon.log"
+    _write_plist_for_bundle "$w_plist" "com.tg-viewer.watcher" "$watcher_app" "$HOME/Library/Logs/tg-viewer-watcher.log"
     ok "Wrote $d_plist"
     ok "Wrote $w_plist"
 
-    # Bootstrap is the modern equivalent of `launchctl load`. Falls back to
-    # the legacy verb so older macOS still works.
     local domain="gui/$UID"
     launchctl bootstrap "$domain" "$d_plist" 2>/dev/null || launchctl load "$d_plist"
     launchctl bootstrap "$domain" "$w_plist" 2>/dev/null || launchctl load "$w_plist"
-    ok "Loaded both agents. Logs: ~/Library/Logs/tg-viewer-{daemon,watcher}.log"
-    log "Status:  launchctl print $domain/com.tg-viewer.daemon"
+
+    ok "Loaded both agents."
+    log ""
+    log "macOS will ask ONCE per agent for permission to access Telegram's"
+    log "data. The popup will name the bundle (TG Capture Daemon / Watcher),"
+    log "NOT generic python3.14 anymore — click Allow for each."
+    log ""
+    log "If consent doesn't persist, manually add both .app bundles to:"
+    log "  System Settings → Privacy & Security → App Management"
+    log "  (paths: $bundles_dir/)"
+    log ""
+    log "Logs: tail -f $HOME/Library/Logs/tg-viewer-{daemon,watcher}.log"
 }
 
 run_uninstall_launchd() {
@@ -535,10 +589,16 @@ run_uninstall_launchd() {
     local domain="gui/$UID"
     for name in daemon watcher; do
         local plist=$(_plist_path "$name")
-        launchctl bootout "$domain/com.tg-viewer.$name" 2>/dev/null \
-            || launchctl unload "$plist" 2>/dev/null || true
+        # bootout returns "no such process" if already detached; ignore it.
+        launchctl bootout "$domain/com.tg-viewer.$name" 2>/dev/null || true
+        launchctl unload "$plist" 2>/dev/null || true
         [[ -f "$plist" ]] && rm -f "$plist" && ok "Removed $plist"
     done
+    # Belt-and-suspenders: kill any lingering python processes from our
+    # bundles. bootout doesn't always wait for the child to exit.
+    pkill -9 -f "tool.tg_daemon"  2>/dev/null || true
+    pkill -9 -f "tool.tg_watcher" 2>/dev/null || true
+    ok "All tg-viewer launchd processes stopped."
 }
 
 run_launchd_status() {

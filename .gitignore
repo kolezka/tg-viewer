@@ -63,3 +63,10 @@ docs/superpowers/
 apps/web/node_modules/
 apps/web/dist/
 apps/web/src/styles.generated.css
+tg_continuous/
+tg_vault/
+
+# launchd .app bundles are generated locally by `./tg-viewer install-launchd`
+# (paths in their launcher scripts are absolute to this checkout, so they
+# don't transfer between machines anyway).
+apps/launchd-bundles/
