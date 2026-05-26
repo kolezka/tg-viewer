@@ -59,27 +59,35 @@ def _handle_sigterm(signum, frame) -> None:  # pragma: no cover — signal handl
     _running = False
 
 
-# Filename suffixes/prefixes we don't bother capturing — pure transients.
-_SKIP_PATTERNS = (
-    ".DS_Store",
-    "-shm",
-    "-wal",
-    "-journal",
-    ".lock",
+# Allow-list of filename prefixes that look like real media or other
+# forensically-interesting content. The daemon snapshots the rest (DBs,
+# metadata, logs) every cycle anyway; the watcher's job is to catch fast
+# deletes of MEDIA specifically — the gap the daemon's 5-minute cadence
+# can't close. An allow-list keeps the vault from being flooded by
+# status-counter files (network-stats, crashhandler, etc.) that Telegram
+# rewrites every few seconds without changing anything we care about.
+_CAPTURE_PREFIXES = (
+    "secret-file-",                  # incoming secret-chat E2E media
+    "local-file-",                   # outgoing photos pre-upload
+    "telegram-local-file-",          # alt outgoing local naming
+    "telegram-cloud-photo-",         # cloud photos (all sizes)
+    "telegram-cloud-document-",      # cloud documents + their thumb sizes
+    "telegram-peer-photo-",          # profile pictures (good for renames)
+    "telegram-stickerpackthumbnail-",  # sticker pack thumbs
+    "tg_image_",                     # sandbox tmp staging area
 )
 
 
 def _should_capture(path: Path) -> bool:
-    """Filter out files that aren't worth deduping into the vault."""
+    """Allow-list of forensically-interesting media filename prefixes.
+
+    Skips _partial.meta transients explicitly so a noisy filename like
+    `secret-file-X-4_partial.meta` doesn't squeak past the prefix check.
+    """
     name = path.name
-    if name.startswith("."):
+    if name.startswith(".") or name.endswith("_partial.meta"):
         return False
-    if name.endswith("_partial.meta"):
-        return False
-    for sfx in _SKIP_PATTERNS:
-        if name.endswith(sfx):
-            return False
-    return True
+    return any(name.startswith(p) for p in _CAPTURE_PREFIXES)
 
 
 def _sha256_of(path: Path, chunk: int = 1 << 20) -> str | None:

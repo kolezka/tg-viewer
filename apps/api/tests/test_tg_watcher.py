@@ -16,25 +16,40 @@ def test_should_capture_accepts_real_telegram_names():
     assert _should_capture(Path("secret-file-5811993738297220291-4"))
     assert _should_capture(Path("local-file--1155884980421330152"))
     assert _should_capture(Path("telegram-cloud-photo-size-2-555-y"))
+    assert _should_capture(Path("telegram-cloud-document-1-1258816259754035"))
+    assert _should_capture(Path("telegram-peer-photo-size-4-X-0-0-0"))
+    assert _should_capture(Path("telegram-stickerpackthumbnail-4--1354900319-0-0"))
+    assert _should_capture(Path("telegram-local-file--5590119168954476542"))
     assert _should_capture(Path("tg_image_1518471281.jpeg"))
 
 
-def test_should_capture_rejects_transients():
+def test_should_capture_rejects_noise_and_transients():
+    # SQLite live state and dotfiles: never interesting
     assert not _should_capture(Path(".DS_Store"))
     assert not _should_capture(Path("db_sqlite-shm"))
     assert not _should_capture(Path("db_sqlite-wal"))
     assert not _should_capture(Path("db_sqlite-journal"))
     assert not _should_capture(Path("foo.lock"))
+    # Partial metadata blob — sister to the real file but no content
     assert not _should_capture(Path("secret-file-X-4_partial.meta"))
+    # Status counters Telegram rewrites every few seconds — would flood vault
+    assert not _should_capture(Path("network-stats"))
+    assert not _should_capture(Path("crashhandler"))
+    assert not _should_capture(Path("notificationsKey"))
+    # Other random sandbox files
+    assert not _should_capture(Path("accounts-shared-data"))
+    assert not _should_capture(Path("some-other-thing"))
 
 
 def test_vault_writer_deduplicates_by_content(tmp_path: Path):
     vault = tmp_path / "vault"
     writer = VaultWriter(vault)
 
-    f1 = tmp_path / "alpha"
-    f2 = tmp_path / "beta-same-content"
-    f3 = tmp_path / "gamma"
+    # Use allow-listed prefixes so _should_capture admits these — VaultWriter
+    # is called directly here but real Handler paths go through that filter.
+    f1 = tmp_path / "secret-file-1-4"
+    f2 = tmp_path / "secret-file-2-4"        # different name, same content
+    f3 = tmp_path / "secret-file-3-4"        # different content
     f1.write_bytes(b"hello world")
     f2.write_bytes(b"hello world")
     f3.write_bytes(b"different")
@@ -51,10 +66,10 @@ def test_vault_writer_deduplicates_by_content(tmp_path: Path):
     assert len(records) == 3
     # The first occurrence of "hello world" is novel=True, the second is False.
     by_path = {Path(r["path"]).name: r for r in records}
-    assert by_path["alpha"]["novel"] is True
-    assert by_path["beta-same-content"]["novel"] is False
-    assert by_path["alpha"]["sha256"] == by_path["beta-same-content"]["sha256"]
-    assert by_path["alpha"]["sha256"] != by_path["gamma"]["sha256"]
+    assert by_path["secret-file-1-4"]["novel"] is True
+    assert by_path["secret-file-2-4"]["novel"] is False
+    assert by_path["secret-file-1-4"]["sha256"] == by_path["secret-file-2-4"]["sha256"]
+    assert by_path["secret-file-1-4"]["sha256"] != by_path["secret-file-3-4"]["sha256"]
 
 
 def test_vault_writer_skips_zero_byte_files(tmp_path: Path):
@@ -62,7 +77,7 @@ def test_vault_writer_skips_zero_byte_files(tmp_path: Path):
     races; skipping avoids polluting the index with no-value records."""
     vault = tmp_path / "vault"
     writer = VaultWriter(vault)
-    empty = tmp_path / "empty"
+    empty = tmp_path / "secret-file-empty-4"
     empty.write_bytes(b"")
     writer.capture(empty, "created")
     assert not (vault / "objects").exists() or not list((vault / "objects").iterdir())
@@ -74,7 +89,7 @@ def test_vault_writer_remembers_known_objects_across_instances(tmp_path: Path):
     objects already on disk — `_known` is seeded from the objects/ dir."""
     vault = tmp_path / "vault"
     writer1 = VaultWriter(vault)
-    f = tmp_path / "alpha"
+    f = tmp_path / "secret-file-alpha-4"
     f.write_bytes(b"persisted")
     writer1.capture(f, "created")
     first_count = len(list((vault / "objects").iterdir()))
@@ -82,7 +97,7 @@ def test_vault_writer_remembers_known_objects_across_instances(tmp_path: Path):
     # Drop writer1, open a new one — it sees the existing object and treats
     # the next capture of the same content as non-novel.
     writer2 = VaultWriter(vault)
-    f2 = tmp_path / "beta"
+    f2 = tmp_path / "secret-file-beta-4"
     f2.write_bytes(b"persisted")
     writer2.capture(f2, "created")
     second_count = len(list((vault / "objects").iterdir()))
