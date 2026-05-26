@@ -88,21 +88,31 @@ def diff_snapshots(
 def find_previous_snapshot(
     current_parsed_dir: Path, repo_root: Path
 ) -> Path | None:
-    """Locate the second-newest `tg_*/tg_*/parsed_data` sibling under repo_root.
+    """Locate the newest `parsed_data` sibling under `repo_root` that isn't current.
 
-    Heuristic only walks two levels (`tg_*/tg_*/`); doesn't follow
-    symlinks; ignores the snapshot at `current_parsed_dir`.
+    Supports both layouts:
+      * `tg_*/tg_*/parsed_data`   — produced by `./tg-viewer backup` (nested)
+      * `tg_*/parsed_data`         — produced by the periodic daemon (flat)
+
+    Heuristic only walks two levels under `repo_root`, doesn't follow
+    symlinks, and ignores the snapshot at `current_parsed_dir`.
     """
     current_parsed_dir = current_parsed_dir.resolve()
     candidates: list[tuple[float, Path]] = []
-    for outer in repo_root.glob("tg_*/"):
+    for outer in repo_root.glob("tg_*"):
         if not outer.is_dir():
             continue
-        for inner in outer.glob("tg_*/"):
-            parsed = inner / "parsed_data"
-            if not parsed.is_dir() or parsed.resolve() == current_parsed_dir:
+        # Flat layout: outer/parsed_data
+        flat = outer / "parsed_data"
+        if flat.is_dir() and flat.resolve() != current_parsed_dir:
+            candidates.append((flat.stat().st_mtime, flat))
+        # Nested layout: outer/tg_*/parsed_data
+        for inner in outer.glob("tg_*"):
+            if not inner.is_dir():
                 continue
-            candidates.append((parsed.stat().st_mtime, parsed))
+            nested = inner / "parsed_data"
+            if nested.is_dir() and nested.resolve() != current_parsed_dir:
+                candidates.append((nested.stat().st_mtime, nested))
     if not candidates:
         return None
     candidates.sort(reverse=True)

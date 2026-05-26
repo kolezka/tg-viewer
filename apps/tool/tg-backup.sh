@@ -10,19 +10,44 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-# Detect --batch mode and strip from positional args
+# Detect --batch and --link-dest <prev_root> and strip them from positional args.
+# --link-dest takes the INNER snapshot dir of a prior backup (e.g.
+# `tg_2026-05-25_23-23-06/tg_2026-05-25_23-23-06`). rsync will hardlink any
+# file whose content+size+mtime matches the corresponding path under that root
+# instead of copying it again — turns a 2.5 GB snapshot into delta-bytes.
 BATCH_MODE=false
+LINK_DEST_ROOT=""
 _args=()
-for arg in "$@"; do
-  if [[ "$arg" == "--batch" ]]; then
-    BATCH_MODE=true
-  else
-    _args+=("$arg")
+_skip_next=false
+for i in "$@"; do
+  if $_skip_next; then
+    LINK_DEST_ROOT="$i"
+    _skip_next=false
+    continue
   fi
+  case "$i" in
+    --batch)       BATCH_MODE=true ;;
+    --link-dest)   _skip_next=true ;;
+    --link-dest=*) LINK_DEST_ROOT="${i#--link-dest=}" ;;
+    *)             _args+=("$i") ;;
+  esac
 done
 DEST="${_args[0]:-.}"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 BACKUP_DIR="$DEST/tg_$TIMESTAMP"
+
+# Helper: emit `--link-dest <absolute_path>` if a usable prior dir exists.
+# Called per rsync invocation with the SAME relative subpath the current
+# rsync is writing to, so the link-dest mirrors the destination layout.
+_link_dest_args() {
+  local sub="$1"  # e.g. "account-XXX/postbox/db/"
+  [[ -n "$LINK_DEST_ROOT" && -d "$LINK_DEST_ROOT/$sub" ]] || return 0
+  # rsync wants an absolute path here, otherwise it resolves relative to the
+  # destination dir which makes the relative-path arithmetic fragile.
+  local abs
+  abs=$(cd "$LINK_DEST_ROOT/$sub" 2>/dev/null && pwd) || return 0
+  printf -- "--link-dest=%s" "$abs"
+}
 
 # Use --progress only when interactive (not batch mode).
 #
@@ -193,7 +218,8 @@ done
 if [[ -d "$APPSTORE_DIR/accounts-metadata" ]]; then
   log "Copying accounts-metadata..."
   mkdir -p "$BACKUP_DIR/accounts-metadata"
-  rsync "${RSYNC_OPTS[@]}" "$APPSTORE_DIR/accounts-metadata/" "$BACKUP_DIR/accounts-metadata/" || rc=$?
+  ld=$(_link_dest_args "accounts-metadata/")
+  rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$APPSTORE_DIR/accounts-metadata/" "$BACKUP_DIR/accounts-metadata/" || rc=$?
   if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
     die "rsync failed with exit code ${rc:-0}"
   fi
@@ -209,7 +235,8 @@ fi
 if [[ -d "$APPSTORE_DIR/logs" ]]; then
   log "Copying Telegram MTProto logs..."
   mkdir -p "$BACKUP_DIR/logs"
-  rsync "${RSYNC_OPTS[@]}" "$APPSTORE_DIR/logs/" "$BACKUP_DIR/logs/" || rc=$?
+  ld=$(_link_dest_args "logs/")
+  rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$APPSTORE_DIR/logs/" "$BACKUP_DIR/logs/" || rc=$?
   if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
     die "rsync failed with exit code ${rc:-0}"
   fi
@@ -234,7 +261,8 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/postbox/db" ]]; then
     log "  Copying postbox database (messages)..."
     mkdir -p "$acct_backup/postbox/db"
-    rsync "${RSYNC_OPTS[@]}" "$d/postbox/db/" "$acct_backup/postbox/db/" || rc=$?
+    ld=$(_link_dest_args "$dir_name/postbox/db/")
+    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/postbox/db/" "$acct_backup/postbox/db/" || rc=$?
     # rsync exit 24 = vanishing source files (normal for active app), 23 = partial transfer
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
@@ -248,7 +276,8 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/postbox/media" ]]; then
     log "  Copying postbox media index..."
     mkdir -p "$acct_backup/postbox/media"
-    rsync "${RSYNC_OPTS[@]}" "$d/postbox/media/" "$acct_backup/postbox/media/" || rc=$?
+    ld=$(_link_dest_args "$dir_name/postbox/media/")
+    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/postbox/media/" "$acct_backup/postbox/media/" || rc=$?
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
     fi
@@ -259,7 +288,8 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/cached" ]]; then
     log "  Copying cached data..."
     mkdir -p "$acct_backup/cached"
-    rsync "${RSYNC_OPTS[@]}" "$d/cached/" "$acct_backup/cached/" || rc=$?
+    ld=$(_link_dest_args "$dir_name/cached/")
+    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/cached/" "$acct_backup/cached/" || rc=$?
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
     fi

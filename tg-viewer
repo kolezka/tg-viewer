@@ -95,6 +95,17 @@ COMMANDS:
     ghosts [OLD NEW]    Diff two parsed_data snapshots; surface deleted messages.
                         Without args: auto-picks the two newest parsed_data dirs.
                         Writes ghosts_diff.json next to the script.
+    daemon [DEST] [SEC] Periodic backup→decrypt→parse loop (foreground).
+                        Default: ./tg_continuous every 300s. Uses
+                        rsync --link-dest so each snapshot only costs delta-bytes.
+    watcher [VAULT]     FSEvents watcher capturing every new file in Telegram's
+                        media dirs into a deduplicating content-addressed vault.
+                        Default vault: ./tg_vault.
+    install-launchd     Install daemon + watcher as launchd agents (auto-start
+                        at login, auto-restart on crash). Writes
+                        ~/Library/LaunchAgents/com.tg-viewer.{daemon,watcher}.plist
+    uninstall-launchd   Remove the launchd agents.
+    launchd-status      Show state of both agents.
     clean               Remove all backup, decrypted, and parsed data
     setup               Install Python dependencies
     help                Show this help
@@ -419,6 +430,127 @@ run_clean() {
     ok "Cleanup complete."
 }
 
+# Default location for the continuous-capture daemon's snapshots + vault.
+# Kept under the repo so cleanup is one `rm -rf` away.
+DEFAULT_DAEMON_DEST="$SCRIPT_DIR/tg_continuous"
+DEFAULT_VAULT_DIR="$SCRIPT_DIR/tg_vault"
+
+run_daemon() {
+    local dest_dir="${1:-$DEFAULT_DAEMON_DEST}"
+    local interval="${2:-300}"
+    title "Periodic backup daemon (dest=$(_redact_path "$dest_dir"), every ${interval}s)"
+    mkdir -p "$dest_dir"
+    # Foreground; launchd takes care of restart-on-crash when wrapped.
+    (cd "$SCRIPT_DIR/apps" && "$SCRIPT_DIR/.venv/bin/python3" -m tool.tg_daemon \
+        --repo "$SCRIPT_DIR" --dest "$dest_dir" --interval "$interval")
+}
+
+run_watcher() {
+    local vault_dir="${1:-$DEFAULT_VAULT_DIR}"
+    title "FSEvents watcher (vault=$(_redact_path "$vault_dir"))"
+    mkdir -p "$vault_dir"
+    (cd "$SCRIPT_DIR/apps" && "$SCRIPT_DIR/.venv/bin/python3" -m tool.tg_watcher --vault "$vault_dir")
+}
+
+# Launchd plist installation. The plist points at the venv's python so the
+# daemon doesn't need PATH wrangling under launchd's stripped environment.
+_plist_path() {
+    echo "$HOME/Library/LaunchAgents/com.tg-viewer.$1.plist"
+}
+
+_write_plist_daemon() {
+    cat > "$1" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.tg-viewer.daemon</string>
+  <key>WorkingDirectory</key><string>$SCRIPT_DIR/apps</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$SCRIPT_DIR/.venv/bin/python3</string>
+    <string>-m</string><string>tool.tg_daemon</string>
+    <string>--repo</string><string>$SCRIPT_DIR</string>
+    <string>--dest</string><string>$DEFAULT_DAEMON_DEST</string>
+    <string>--interval</string><string>300</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$HOME/Library/Logs/tg-viewer-daemon.log</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/tg-viewer-daemon.log</string>
+</dict>
+</plist>
+EOF
+}
+
+_write_plist_watcher() {
+    cat > "$1" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.tg-viewer.watcher</string>
+  <key>WorkingDirectory</key><string>$SCRIPT_DIR/apps</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$SCRIPT_DIR/.venv/bin/python3</string>
+    <string>-m</string><string>tool.tg_watcher</string>
+    <string>--vault</string><string>$DEFAULT_VAULT_DIR</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardOutPath</key><string>$HOME/Library/Logs/tg-viewer-watcher.log</string>
+  <key>StandardErrorPath</key><string>$HOME/Library/Logs/tg-viewer-watcher.log</string>
+</dict>
+</plist>
+EOF
+}
+
+run_install_launchd() {
+    title "Installing launchd agents"
+    [[ -x "$SCRIPT_DIR/.venv/bin/python3" ]] || die ".venv missing — run ./tg-viewer setup first"
+
+    mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
+
+    local d_plist=$(_plist_path daemon)
+    local w_plist=$(_plist_path watcher)
+    _write_plist_daemon  "$d_plist"
+    _write_plist_watcher "$w_plist"
+    ok "Wrote $d_plist"
+    ok "Wrote $w_plist"
+
+    # Bootstrap is the modern equivalent of `launchctl load`. Falls back to
+    # the legacy verb so older macOS still works.
+    local domain="gui/$UID"
+    launchctl bootstrap "$domain" "$d_plist" 2>/dev/null || launchctl load "$d_plist"
+    launchctl bootstrap "$domain" "$w_plist" 2>/dev/null || launchctl load "$w_plist"
+    ok "Loaded both agents. Logs: ~/Library/Logs/tg-viewer-{daemon,watcher}.log"
+    log "Status:  launchctl print $domain/com.tg-viewer.daemon"
+}
+
+run_uninstall_launchd() {
+    title "Uninstalling launchd agents"
+    local domain="gui/$UID"
+    for name in daemon watcher; do
+        local plist=$(_plist_path "$name")
+        launchctl bootout "$domain/com.tg-viewer.$name" 2>/dev/null \
+            || launchctl unload "$plist" 2>/dev/null || true
+        [[ -f "$plist" ]] && rm -f "$plist" && ok "Removed $plist"
+    done
+}
+
+run_launchd_status() {
+    local domain="gui/$UID"
+    for name in daemon watcher; do
+        echo "── com.tg-viewer.$name ──"
+        launchctl print "$domain/com.tg-viewer.$name" 2>&1 | \
+            grep -E "(state|last exit|pid|path)" | head -10 || echo "  not loaded"
+        echo
+    done
+}
+
 run_ghosts() {
     local old_arg="${1:-}"
     local new_arg="${2:-}"
@@ -618,6 +750,24 @@ main() {
         ghosts)
             check_dependencies
             run_ghosts "${2:-}" "${3:-}"
+            ;;
+        daemon)
+            check_dependencies
+            run_daemon "${2:-}" "${3:-}"
+            ;;
+        watcher)
+            check_dependencies
+            run_watcher "${2:-}"
+            ;;
+        install-launchd)
+            check_dependencies
+            run_install_launchd
+            ;;
+        uninstall-launchd)
+            run_uninstall_launchd
+            ;;
+        launchd-status)
+            run_launchd_status
             ;;
         help|--help|-h)
             show_help
