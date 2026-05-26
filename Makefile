@@ -8,10 +8,15 @@
 
 SHELL := /bin/bash
 
-DATA    ?=
-ACCOUNT ?=
-PORT    ?=
-HOST    ?=
+DATA     ?=
+ACCOUNT  ?=
+PORT     ?=
+HOST     ?=
+OLD      ?=
+NEW      ?=
+DEST     ?=
+INTERVAL ?=
+VAULT    ?=
 
 TG      := ./tg-viewer
 TG_OPTS := $(if $(ACCOUNT),--account $(ACCOUNT)) $(if $(PORT),--port $(PORT)) $(if $(HOST),--host $(HOST))
@@ -19,12 +24,17 @@ TG_OPTS := $(if $(ACCOUNT),--account $(ACCOUNT)) $(if $(PORT),--port $(PORT)) $(
 .DEFAULT_GOAL := help
 
 .PHONY: help setup backup decrypt parse webui dev full clean \
+        ghosts daemon watcher install-launchd uninstall-launchd launchd-status \
         test typecheck codegen web-install web-build web-dev
 
 help:  ## Show this help
-	@awk 'BEGIN {FS = ":.*?## "; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*?## "; printf "Targets:\n"} /^[a-zA-Z_-]+:.*?## / {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 	@echo ""
-	@echo "Variables: DATA, ACCOUNT, PORT, HOST  (e.g. make webui DATA=./tg_*/parsed_data)"
+	@echo "Variables:"
+	@echo "  DATA, ACCOUNT, PORT, HOST    pipeline wrappers (e.g. make webui DATA=./tg_*/parsed_data)"
+	@echo "  OLD, NEW                     ghosts diff snapshots (optional — auto-picks 2 newest)"
+	@echo "  DEST, INTERVAL               daemon dest dir + poll seconds (default ./tg_continuous, 300)"
+	@echo "  VAULT                        watcher content-addressed vault dir (default ./tg_vault)"
 
 # ── tg-viewer wrappers ────────────────────────────────────────────────
 
@@ -55,6 +65,26 @@ full:  ## Full pipeline: backup → decrypt → parse → webui
 
 clean:  ## Remove all backup, decrypted, and parsed data
 	$(TG) clean
+
+# ── 24/7 capture + launchd ────────────────────────────────────────────
+
+ghosts:  ## Diff two parsed_data snapshots (OLD=… NEW=…; auto-pick newest two if unset)
+	$(TG) ghosts $(OLD) $(NEW)
+
+daemon:  ## Periodic backup→decrypt→parse loop (DEST=./tg_continuous INTERVAL=300)
+	$(TG) daemon $(DEST) $(INTERVAL)
+
+watcher:  ## FSEvents watcher → content-addressed vault (VAULT=./tg_vault)
+	$(TG) watcher $(VAULT)
+
+install-launchd:  ## Install daemon + watcher as launchd agents (auto-start at login)
+	$(TG) install-launchd
+
+uninstall-launchd:  ## Remove the launchd agents
+	$(TG) uninstall-launchd
+
+launchd-status:  ## Show state of both launchd agents
+	$(TG) launchd-status
 
 # ── Development ───────────────────────────────────────────────────────
 
