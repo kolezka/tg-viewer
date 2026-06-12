@@ -17,13 +17,21 @@ NEW      ?=
 DEST     ?=
 INTERVAL ?=
 VAULT    ?=
+SRC      ?=
+
+# Import target: Telegram macOS group container holding the live decryption key,
+# and the staging dir the copied account-* gets symlinked into.
+TG_CONTAINER ?= $(HOME)/Library/Group Containers/6N38VWS5BX.ru.keepcoder.Telegram/appstore
+IMPORT_DEST  ?= tg_imported
+# Positional path: `make import /path/to/account-<id>` (falls back to SRC=/path).
+IMPORT_SRC   := $(or $(strip $(filter-out import,$(MAKECMDGOALS))),$(SRC))
 
 TG      := ./tg-viewer
 TG_OPTS := $(if $(ACCOUNT),--account $(ACCOUNT)) $(if $(PORT),--port $(PORT)) $(if $(HOST),--host $(HOST))
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup backup decrypt parse webui dev full clean \
+.PHONY: help setup backup decrypt parse webui dev full import clean \
         ghosts daemon watcher install-launchd uninstall-launchd launchd-status \
         test typecheck codegen web-install web-build web-dev
 
@@ -35,6 +43,7 @@ help:  ## Show this help
 	@echo "  OLD, NEW                     ghosts diff snapshots (optional — auto-picks 2 newest)"
 	@echo "  DEST, INTERVAL               daemon dest dir + poll seconds (default ./tg_continuous, 300)"
 	@echo "  VAULT                        watcher content-addressed vault dir (default ./tg_vault)"
+	@echo "  SRC, IMPORT_DEST             import a copied account-* dir (make import /path; staging ./tg_imported)"
 
 # ── tg-viewer wrappers ────────────────────────────────────────────────
 
@@ -62,6 +71,25 @@ dev:  ## FastAPI + Bun HMR dev stack (DATA=./tg_.../parsed_data required)
 
 full:  ## Full pipeline: backup → decrypt → parse → webui
 	$(TG) full $(DATA) $(TG_OPTS)
+
+import:  ## Import an already-copied account-* dir + reuse live key, then serve (make import /path/to/account-<id>)
+	@src="$(IMPORT_SRC)"; \
+	if [ -z "$$src" ]; then echo "usage: make import /path/to/account-<id>   (or SRC=/path)" >&2; exit 2; fi; \
+	if [ ! -d "$$src" ]; then echo "not a directory: $$src" >&2; exit 2; fi; \
+	key="$(TG_CONTAINER)/.tempkeyEncrypted"; \
+	if [ ! -f "$$key" ]; then echo "live key not found: $$key" >&2; echo "(is Telegram installed for this user?)" >&2; exit 2; fi; \
+	mkdir -p "$(IMPORT_DEST)"; \
+	cp "$$key" "$(IMPORT_DEST)/.tempkeyEncrypted"; \
+	cp "$(TG_CONTAINER)/accounts-shared-data" "$(IMPORT_DEST)/accounts-shared-data" 2>/dev/null || true; \
+	case "$$(basename "$$src")" in \
+	  account-*) ln -sfn "$$src" "$(IMPORT_DEST)/$$(basename "$$src")" ;; \
+	  *) found=0; for a in "$$src"/account-*; do [ -d "$$a" ] || continue; ln -sfn "$$a" "$(IMPORT_DEST)/$$(basename "$$a")"; found=1; done; \
+	     if [ "$$found" = 0 ]; then echo "no account-* dir at or under: $$src" >&2; exit 2; fi ;; \
+	esac; \
+	echo "Staged into $(IMPORT_DEST)/ — running decrypt → parse → webui"; \
+	$(TG) decrypt "$(IMPORT_DEST)" $(TG_OPTS) && \
+	$(TG) parse   "$(IMPORT_DEST)" $(TG_OPTS) && \
+	$(TG) webui   "$(IMPORT_DEST)/parsed_data" $(TG_OPTS)
 
 clean:  ## Remove all backup, decrypted, and parsed data
 	$(TG) clean
@@ -105,3 +133,11 @@ web-build:  ## Build frontend production bundle → apps/web/dist
 
 web-dev:  ## Frontend dev server only (no API; use `make dev` for full stack)
 	cd apps/web && bun run dev
+
+# `make import /path/to/account-<id>` parses the path as a phantom goal. Swallow
+# it as a no-op — but ONLY while `import` runs, so typos in other targets still
+# error normally. (Paths with spaces won't survive MAKECMDGOALS — use SRC="…".)
+ifneq (,$(filter import,$(MAKECMDGOALS)))
+%:
+	@:
+endif
