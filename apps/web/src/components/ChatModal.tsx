@@ -24,14 +24,16 @@ export default function ChatModal({ chat, onClose }: Props) {
     <div
       className="fixed inset-0 bg-black/55 z-50 flex items-center justify-center p-5"
       onClick={onClose}
-      role="dialog"
     >
       <div
         className="bg-white rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="chat-modal-title"
       >
         <div className="flex justify-between items-center px-5 py-4 border-b border-gray-200 bg-gray-50">
-          <h3 className="text-tg-primary font-semibold">
+          <h3 id="chat-modal-title" className="text-tg-primary font-semibold">
             {chat.name} <span className="text-xs text-gray-500 ml-2">{chat.message_count} msgs</span>
           </h3>
           <button

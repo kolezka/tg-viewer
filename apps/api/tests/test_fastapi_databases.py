@@ -22,3 +22,7 @@ def test_database_detail_payload(fastapi_client):
     assert data["decrypted"] is True
     assert len(data["messages"]) == 3
     assert len(data["peers"]) == 2
+    # Heavy collections are now stripped from this unpaginated endpoint; they
+    # are served via their own paginated routes (/api/logs, /api/storage, etc.).
+    for heavy in ("messages_fts", "storage_catalog", "log_events", "ghosts_history", "forensic_index"):
+        assert heavy not in data

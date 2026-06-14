@@ -68,7 +68,7 @@ def name(value) -> str:
     to `"***"`.
     """
     if not REDACT:
-        return str(value) if value is not None else ""
+        return str(value)
     if value is None:
         return "***"
     s = str(value).strip()
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     assert hexkey("a1b2c3d4") == "a1b2c3d4"
     assert name("Alice Smith") == "Alice Smith"
     assert name("") == ""
-    assert name(None) == ""
+    assert name(None) == "None"
     assert path("/tmp/tg_2026-04-15_12-58-12/parsed_data") == "/tmp/tg_2026-04-15_12-58-12/parsed_data"
 
     # On

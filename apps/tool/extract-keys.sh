@@ -40,31 +40,54 @@ extract_telegram_keys() {
     for pattern in "${key_patterns[@]}"; do
         log "  Searching for pattern: $pattern" >&2
 
-        # Search generic passwords
-        while IFS= read -r line; do
-            if [[ -n "$line" ]]; then
-                local account service password=""
-                account=$(echo "$line" | cut -d: -f1)
-                service=$(echo "$line" | cut -d: -f2)
-                if password=$(security find-generic-password -a "$account" -s "$service" -w 2>/dev/null); then
-                    pairs+="${account}_${service}"$'\0'"${password}"$'\0'
-                    ok "    Found key: $account @ $service" >&2
-                fi
-            fi
-        done < <(security dump-keychain 2>/dev/null | grep -A1 -B1 "$pattern" | grep -E "acct|svce" | paste - - | sed 's/.*"\(.*\)".*/\1/' | tr ' ' ':' 2>/dev/null || true)
+        # Query the keychain directly for the matching item, rather than
+        # scraping `security dump-keychain`. `-l "$pattern"` matches the label;
+        # `-g` prints the item's attributes (acct/svce/srvr) to stderr and the
+        # password as `password: "…"` (also on stderr). We merge stdout+stderr
+        # and let python3 parse the well-known attribute/password lines, which
+        # avoids the old `grep | paste - -` field-pairing that could mismatch.
+        #
+        # Parser contract — emits, for the single item `-g` reports:
+        #   <account_or_empty>\0<service_or_server_or_empty>\0<password_or_empty>\0
+        # (NUL-delimited). The caller turns this into the same
+        # "${account}_${service}" → password pairs as before.
 
-        # Search internet passwords
-        while IFS= read -r line; do
-            if [[ -n "$line" ]]; then
-                local account server password=""
-                account=$(echo "$line" | cut -d: -f1)
-                server=$(echo "$line" | cut -d: -f2)
-                if password=$(security find-internet-password -a "$account" -s "$server" -w 2>/dev/null); then
-                    pairs+="${account}_${server}"$'\0'"${password}"$'\0'
-                    ok "    Found internet key: $account @ $server" >&2
-                fi
+        # Search generic passwords (acct + svce attributes)
+        while IFS= read -r -d '' account && IFS= read -r -d '' service && IFS= read -r -d '' password; do
+            if [[ -n "$account" || -n "$service" ]]; then
+                pairs+="${account}_${service}"$'\0'"${password}"$'\0'
+                ok "    Found key: $account @ $service" >&2
             fi
-        done < <(security dump-keychain 2>/dev/null | grep -A1 -B1 "$pattern" | grep -E "acct|srvr" | paste - - | sed 's/.*"\(.*\)".*/\1/' | tr ' ' ':' 2>/dev/null || true)
+        done < <(security find-generic-password -l "$pattern" -g 2>&1 | python3 -c '
+import re, sys
+text = sys.stdin.read()
+def attr(name):
+    # Matches lines like: "acct"<blob>="value"  /  "svce"<blob>="value"
+    m = re.search(r"\"%s\"[^=]*=\"(.*)\"\s*$" % name, text, re.MULTILINE)
+    return m.group(1) if m else ""
+def password():
+    m = re.search(r"^password:\s*\"(.*)\"\s*$", text, re.MULTILINE)
+    return m.group(1) if m else ""
+sys.stdout.write("\0".join([attr("acct"), attr("svce"), password()]) + "\0")
+' 2>/dev/null || true)
+
+        # Search internet passwords (acct + srvr attributes)
+        while IFS= read -r -d '' account && IFS= read -r -d '' server && IFS= read -r -d '' password; do
+            if [[ -n "$account" || -n "$server" ]]; then
+                pairs+="${account}_${server}"$'\0'"${password}"$'\0'
+                ok "    Found internet key: $account @ $server" >&2
+            fi
+        done < <(security find-internet-password -l "$pattern" -g 2>&1 | python3 -c '
+import re, sys
+text = sys.stdin.read()
+def attr(name):
+    m = re.search(r"\"%s\"[^=]*=\"(.*)\"\s*$" % name, text, re.MULTILINE)
+    return m.group(1) if m else ""
+def password():
+    m = re.search(r"^password:\s*\"(.*)\"\s*$", text, re.MULTILINE)
+    return m.group(1) if m else ""
+sys.stdout.write("\0".join([attr("acct"), attr("srvr"), password()]) + "\0")
+' 2>/dev/null || true)
     done
 
     printf '%s' "$pairs" | python3 -c '

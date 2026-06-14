@@ -36,7 +36,7 @@ export default function MediaTab() {
       />
       <div className="flex flex-wrap gap-2 mb-4">
         {TYPES.map((t) => {
-          const count = data?.counts?.[t.key || "all"] ?? 0;
+          const count = t.key ? data?.counts?.[t.key] ?? 0 : data?.total ?? 0;
           return (
             <button
               key={t.key}

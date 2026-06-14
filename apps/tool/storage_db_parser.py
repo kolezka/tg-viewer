@@ -43,7 +43,7 @@ def decode_t15_value(blob: bytes) -> tuple[str, int] | None:
     Returns None for malformed input rather than raising — we'd rather skip a
     corrupt row than abort the entire catalog scan.
     """
-    if not blob or len(blob) < 11:
+    if not blob or len(blob) < 12:
         return None
     if blob[0] != 0x00:
         return None

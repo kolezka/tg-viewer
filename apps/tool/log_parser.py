@@ -44,6 +44,7 @@ Cross-reference adds `in_db: bool` and `db_match: {...} | None` to every
 
 from __future__ import annotations
 
+import bisect
 import json
 import re
 import sys
@@ -370,6 +371,11 @@ def cross_reference_with_messages(
     for entries in by_peer.values():
         entries.sort(key=lambda x: x[0])
 
+    # Parallel timestamp lists for bisect (entries are sorted by ts above).
+    ts_by_peer: dict[int, list[int]] = {
+        pid: [ts for ts, _ in entries] for pid, entries in by_peer.items()
+    }
+
     for ev in events:
         if ev["event"] != "encrypted_message":
             continue
@@ -377,8 +383,13 @@ def cross_reference_with_messages(
         peer_id = data.get("peer_id")
         date = data.get("date")
         candidates = by_peer.get(peer_id, [])
+        timestamps = ts_by_peer.get(peer_id, [])
         match = None
-        for ts, msg in candidates:
+        # Jump to the first candidate that could fall inside the window.
+        idx = bisect.bisect_left(timestamps, date - tolerance_seconds)
+        for ts, msg in candidates[idx:]:
+            if ts > date + tolerance_seconds:
+                break
             if abs(ts - date) <= tolerance_seconds:
                 match = {
                     "peer_id": msg.get("peer_id"),

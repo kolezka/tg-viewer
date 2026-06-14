@@ -106,17 +106,27 @@ def build_app_bundle(
     python_path: Path,
     exec_args: list[str],
 ) -> None:
-    if app_path.exists():
-        shutil.rmtree(app_path)
-    macos_dir = app_path / "Contents" / "MacOS"
+    # Build the complete bundle in a sibling temp path, then atomically swap
+    # it into place *before* codesigning. The old non-atomic flow rmtree'd the
+    # live bundle up front, so a crash (or a failed codesign) left a destroyed
+    # agent with no launcher. Now the worst case is a fully-formed but unsigned
+    # bundle — the launcher still exists and the agent can run.
+    new_path = app_path.parent / (app_path.name + ".new")
+    if new_path.exists():
+        shutil.rmtree(new_path)
+    macos_dir = new_path / "Contents" / "MacOS"
     macos_dir.mkdir(parents=True)
 
-    (app_path / "Contents" / "Info.plist").write_text(
+    (new_path / "Contents" / "Info.plist").write_text(
         render_info_plist(bundle_id, display_name)
     )
     launcher = macos_dir / "launcher"
     launcher.write_text(render_launcher_script(str(python_path), exec_args))
     launcher.chmod(0o755)
+
+    # Atomically replace the live bundle with the freshly-built one.
+    shutil.rmtree(app_path, ignore_errors=True)
+    os.replace(new_path, app_path)
 
     subprocess.run(
         ["codesign", "--force", "--deep", "--sign", "-", str(app_path)],

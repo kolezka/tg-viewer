@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from api.loader import load_telegram_data
@@ -36,6 +37,15 @@ def create_app(data_dir: str | Path | None = None, account: str | None = None) -
         description="Telegram cache viewer API",
         version="1.0.0",
         lifespan=lifespan,
+    )
+
+    # CORS restricted to the Bun dev origins (vite/HMR on :5173). The packaged
+    # build is same-origin (served via StaticFiles below) so it needs no entry.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        allow_methods=["GET"],
+        allow_headers=["*"],
     )
 
     # API routers FIRST. The order matters because StaticFiles(html=True) below

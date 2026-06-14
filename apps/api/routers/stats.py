@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 
-from api.chats_logic import compute_chats
 from api.models import Stats, StatsDb
 
 router = APIRouter(prefix="/api", tags=["stats"])
@@ -30,7 +29,7 @@ def get_stats(request: Request) -> Stats:
             tables=len(db_data.get("schema", {}).get("tables", [])),
         )
 
-    total_chats = len(compute_chats(state))
+    total_chats = state.chat_count()
 
     return Stats(
         total_databases=total_databases,

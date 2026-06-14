@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useLogs } from "../api/queries";
+import type { Schemas } from "../api/client";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
 import { formatBytes } from "../lib/format";
 import Pagination from "./Pagination";
@@ -60,7 +61,7 @@ export default function LogEventsTab() {
 
       <div className="flex flex-wrap gap-2 mb-4">
         {EVENT_TYPES.map((t) => {
-          const count = data?.counts?.[t.key || "all"] ?? 0;
+          const count = t.key ? data?.counts?.[t.key] ?? 0 : data?.total ?? 0;
           return (
             <button
               key={t.key}
@@ -116,14 +117,21 @@ export default function LogEventsTab() {
   );
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function LogRow({ ev }: { ev: any }) {
+// Log `data` fields are loosely typed (`unknown`); coerce for display.
+function str(v: unknown): string {
+  return v == null ? "" : String(v);
+}
+function num(v: unknown): number | undefined {
+  return typeof v === "number" ? v : undefined;
+}
+
+function LogRow({ ev }: { ev: Schemas["LogEvent"] }) {
   const ts = ev.log_timestamp;
   const evType = ev.event;
-  const data = ev.data ?? {};
+  const data = (ev.data ?? {}) as Record<string, unknown>;
 
   if (evType === "encrypted_message") {
-    const file = data.file;
+    const file = data.file as Record<string, unknown> | undefined;
     const isGhost = ev.in_db === false;
     return (
       <div>
@@ -131,12 +139,12 @@ function LogRow({ ev }: { ev: any }) {
         {" "}
         <span className="text-blue-700 font-semibold">encrypted_message</span>
         {" "}
-        chatId={data.chatId ?? data.chat_id}
+        chatId={str(data.chatId ?? data.chat_id)}
         {file && (
           <>
             {" · "}
             <span className="text-purple-700">file</span>{" "}
-            id={file.id} dc={file.dcId ?? file.dc_id} size={formatBytes(file.size)} kf={file.keyFingerprint ?? file.key_fingerprint}
+            id={str(file.id)} dc={str(file.dcId ?? file.dc_id)} size={formatBytes(num(file.size))} kf={str(file.keyFingerprint ?? file.key_fingerprint)}
           </>
         )}
         {!file && <span className="text-gray-400"> · text-only</span>}
@@ -154,8 +162,8 @@ function LogRow({ ev }: { ev: any }) {
       <div>
         <span className="text-gray-500">{ts}</span>{" "}
         <span className="text-orange-700 font-semibold">upload_part</span>{" "}
-        fileId={data.fileId ?? data.file_id} part={data.filePart ?? data.file_part}{" "}
-        bytes={formatBytes(data.bytes_size)}
+        fileId={str(data.fileId ?? data.file_id)} part={str(data.filePart ?? data.file_part)}{" "}
+        bytes={formatBytes(num(data.bytes_size))}
       </div>
     );
   }
@@ -167,7 +175,7 @@ function LogRow({ ev }: { ev: any }) {
         <span className={evType === "download_file" ? "text-green-700 font-semibold" : "text-amber-700 font-semibold"}>
           {evType}
         </span>{" "}
-        id={data.fileId ?? data.file_id ?? data.id} size={formatBytes(data.size ?? data.bytes_size)}
+        id={str(data.fileId ?? data.file_id ?? data.id)} size={formatBytes(num(data.size ?? data.bytes_size))}
       </div>
     );
   }
@@ -177,8 +185,8 @@ function LogRow({ ev }: { ev: any }) {
       <div>
         <span className="text-gray-500">{ts}</span>{" "}
         <span className="text-gray-700 font-semibold">pending_removed</span>{" "}
-        chatId={data.chatId ?? data.chat_id} msg={data.msg_index_a ?? data.msgIndexA}_
-        {data.msg_index_b ?? data.msgIndexB}
+        chatId={str(data.chatId ?? data.chat_id)} msg={str(data.msg_index_a ?? data.msgIndexA)}_
+        {str(data.msg_index_b ?? data.msgIndexB)}
       </div>
     );
   }

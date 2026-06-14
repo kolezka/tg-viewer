@@ -20,14 +20,16 @@ export default function MediaModal({ item, onClose }: Props) {
     <div
       className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-5"
       onClick={onClose}
-      role="dialog"
     >
       <div
         className="bg-white rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="media-modal-title"
       >
         <div className="flex justify-between items-center px-5 py-3 border-b border-gray-200">
-          <div className="text-sm font-mono">{item.filename}</div>
+          <div id="media-modal-title" className="text-sm font-mono">{item.filename}</div>
           <button
             onClick={onClose}
             className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-100"

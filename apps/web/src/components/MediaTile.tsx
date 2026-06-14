@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api/client";
 
 interface MediaEntry {
@@ -61,6 +61,7 @@ export default function MediaTile({ item, defaultAccount, className, onClick }: 
   const filename = item.filename;
   const type = resolveType(item);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [failed, setFailed] = useState(false);
 
   if (!filename || !account) {
     return <Placeholder type={type} className={className} />;
@@ -79,15 +80,9 @@ export default function MediaTile({ item, defaultAccount, className, onClick }: 
     }
   };
 
-  const replaceWithPlaceholder = (e: React.SyntheticEvent<HTMLImageElement | HTMLVideoElement>) => {
-    const el = e.currentTarget;
-    const parent = el.parentElement;
-    if (!parent) return;
-    const ph = document.createElement("div");
-    ph.className = "w-full h-full flex items-center justify-center text-xs text-gray-500 p-2 break-all bg-gray-100";
-    ph.textContent = `(missing ${type})`;
-    parent.replaceChild(ph, el);
-  };
+  if (failed) {
+    return <Placeholder type={type} filename={filename} className={className} onClick={onClick} />;
+  }
 
   if (type === "photo" || type === "sticker" || type === "gif") {
     return (
@@ -96,7 +91,7 @@ export default function MediaTile({ item, defaultAccount, className, onClick }: 
           src={url}
           alt={filename}
           loading="lazy"
-          onError={replaceWithPlaceholder}
+          onError={() => setFailed(true)}
           className="w-full h-full object-cover"
         />
       </button>
@@ -113,7 +108,7 @@ export default function MediaTile({ item, defaultAccount, className, onClick }: 
           muted
           playsInline
           onLoadedMetadata={handleVideoLoaded}
-          onError={replaceWithPlaceholder}
+          onError={() => setFailed(true)}
           className="w-full h-full object-cover"
         />
       </button>

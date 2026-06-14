@@ -208,7 +208,13 @@ def daemon_loop(
     )
 
     cycle = 0
-    while _running:
+    # The exit check lives at the top of the loop (not mid-cycle) so that a
+    # SIGTERM arriving during backup/decrypt/parse still lets the current
+    # cycle finish its prune step before we break. Otherwise snapshots would
+    # accumulate unpruned across every shutdown→restart.
+    while True:
+        if not _running:
+            break
         cycle += 1
         if max_cycles is not None and cycle > max_cycles:
             break
@@ -219,7 +225,8 @@ def daemon_loop(
         if new_backup is not None:
             _run_decrypt_and_parse(repo_root, new_backup)
 
-            # Pruning
+            # Pruning — runs even if SIGTERM cleared _running mid-cycle, since
+            # the exit check is at the top of the next iteration.
             to_prune = plan_pruning(_list_snapshots(dest_root), time.time())
             if to_prune:
                 _log(f"pruning {len(to_prune)} stale snapshot(s)")

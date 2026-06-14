@@ -24,10 +24,26 @@ def list_databases(request: Request) -> list[DatabaseSummary]:
     return out
 
 
+# Collections too large to safely dump in a single unpaginated /api/database
+# response. They have dedicated paginated routes (/api/messages, /api/logs,
+# /api/storage, /api/forensics, /api/ghosts) so we strip them here rather than
+# returning every row at once. `messages`/`peers`/`conversations`/`media_catalog`
+# stay because they are declared DatabaseDetail fields the frontend type and
+# tests rely on.
+_HEAVY_KEYS = (
+    "messages_fts",
+    "storage_catalog",
+    "log_events",
+    "ghosts_history",
+    "forensic_index",
+)
+
+
 @router.get("/database/{db_name}", response_model=DatabaseDetail)
 def get_database(db_name: str, request: Request) -> DatabaseDetail:
     state = request.app.state.app_state
     db_data = state.databases.get(db_name)
     if db_data is None:
         raise HTTPException(status_code=404, detail="Database not found")
-    return DatabaseDetail(**db_data)
+    trimmed = {k: v for k, v in db_data.items() if k not in _HEAVY_KEYS}
+    return DatabaseDetail(**trimmed)

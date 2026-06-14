@@ -146,6 +146,10 @@ class VaultWriter:
         self.objects_dir = vault_dir / "objects"
         self.index_file = vault_dir / "index.jsonl"
         self.objects_dir.mkdir(parents=True, exist_ok=True)
+        # Reclaim orphaned tmp objects left by a crash mid-copy. They're never
+        # promoted to a sha-named object, so they'd otherwise accumulate.
+        for t in self.objects_dir.glob(".tmp-*"):
+            t.unlink(missing_ok=True)
         # Track sha→already-stored so we don't rehash on every event.
         self._known: set[str] = {
             p.name

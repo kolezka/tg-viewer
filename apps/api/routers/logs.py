@@ -65,8 +65,8 @@ def list_log_events(
     items.sort(key=lambda e: e.get("log_timestamp", ""), reverse=True)
 
     counts: dict[str, int] = {"all": 0, "ghost": 0}
-    for db_data in state.databases.values():
-        if account and db_data is not state.databases.get(account):
+    for db_name, db_data in state.databases.items():
+        if account and db_name != account:
             continue
         for ev in db_data.get("log_events", []):
             counts["all"] += 1

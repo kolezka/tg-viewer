@@ -44,6 +44,8 @@ help:  ## Show this help
 	@echo "  DEST, INTERVAL               daemon dest dir + poll seconds (default ./tg_continuous, 300)"
 	@echo "  VAULT                        watcher content-addressed vault dir (default ./tg_vault)"
 	@echo "  SRC, IMPORT_DEST             import a copied account-* dir (make import /path; staging ./tg_imported)"
+	@echo "                               for paths with spaces or a leading '-', use the SRC= form:"
+	@echo "                                 make import SRC='/path/with spaces/account-123'"
 
 # ── tg-viewer wrappers ────────────────────────────────────────────────
 
@@ -72,9 +74,11 @@ dev:  ## FastAPI + Bun HMR dev stack (DATA=./tg_.../parsed_data required)
 full:  ## Full pipeline: backup → decrypt → parse → webui
 	$(TG) full '$(DATA)' $(TG_OPTS)
 
-import:  ## Import an already-copied account-* dir + reuse live key, then serve (make import /path/to/account-<id>)
+import:  ## Import an already-copied account-* dir + reuse live key, then serve (make import /path/to/account-<id>; use SRC='…' for paths with spaces or leading '-')
 	@src="$(IMPORT_SRC)"; \
-	if [ -z "$$src" ]; then echo "usage: make import /path/to/account-<id>   (or SRC=/path)" >&2; exit 2; fi; \
+	if [ -z "$$src" ]; then echo "usage: make import /path/to/account-<id>   (or SRC=/path)" >&2; \
+	  echo "       for paths with spaces or a leading '-', use the SRC= form:" >&2; \
+	  echo "         make import SRC='/path/with spaces/account-123'" >&2; exit 2; fi; \
 	if [ ! -d "$$src" ]; then echo "not a directory: $$src" >&2; exit 2; fi; \
 	key="$(TG_CONTAINER)/.tempkeyEncrypted"; \
 	if [ ! -f "$$key" ]; then echo "live key not found: $$key" >&2; echo "(is Telegram installed for this user?)" >&2; exit 2; fi; \
@@ -136,7 +140,15 @@ web-dev:  ## Frontend dev server only (no API; use `make dev` for full stack)
 
 # `make import /path/to/account-<id>` parses the path as a phantom goal. Swallow
 # it as a no-op — but ONLY while `import` runs, so typos in other targets still
-# error normally. (Paths with spaces won't survive MAKECMDGOALS — use SRC="…".)
+# error normally.
+#
+# Limitations of the positional form (it reads $(MAKECMDGOALS)):
+#   - a misspelled sibling target alongside `import` is silently swallowed here
+#     instead of erroring;
+#   - paths with spaces are split into multiple goals, and a path with a leading
+#     '-' is mis-read as a flag.
+# For any path with spaces or a leading '-', use the explicit SRC= form instead:
+#     make import SRC='/path/with spaces/account-123'
 ifneq (,$(filter import,$(MAKECMDGOALS)))
 %:
 	@:

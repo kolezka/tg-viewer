@@ -45,6 +45,26 @@ def message_key(msg: dict[str, Any]) -> tuple[Any, ...]:
 _DIFF_FIELDS = ("text", "media", "outgoing", "peer_name")
 
 
+def _index_by_key(msgs: list[dict[str, Any]]) -> dict[tuple[Any, ...], dict[str, Any]]:
+    """Build a key→message map that's collision-safe for duplicate keys.
+
+    `message_key` can collide (e.g. two same-second empty-text messages in the
+    same chat hash identically). A plain dict comprehension would silently drop
+    all but the last colliding message from the diff. Instead we append a
+    per-base-key occurrence counter so the Nth message with an otherwise-
+    identical key becomes a distinct entry. The counting is deterministic and
+    order-stable, so equal multisets in `old` and `new` still match exactly.
+    """
+    out: dict[tuple[Any, ...], dict[str, Any]] = {}
+    seen: dict[tuple[Any, ...], int] = {}
+    for m in msgs:
+        base = message_key(m)
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        out[base + (n,)] = m
+    return out
+
+
 def _row(msg: dict[str, Any]) -> dict[str, Any]:
     """Project a message into a small comparable dict (drop noisy fields)."""
     return {
@@ -68,8 +88,8 @@ def diff_snapshots(
     its own — usually just new messages). `modified` catches in-place
     edits / redactions: same key, different `_DIFF_FIELDS`.
     """
-    old_by_key = {message_key(m): m for m in old}
-    new_by_key = {message_key(m): m for m in new}
+    old_by_key = _index_by_key(old)
+    new_by_key = _index_by_key(new)
 
     removed = [_row(old_by_key[k]) for k in old_by_key.keys() - new_by_key.keys()]
     added = [_row(new_by_key[k]) for k in new_by_key.keys() - old_by_key.keys()]
@@ -99,20 +119,32 @@ def find_previous_snapshot(
     """
     current_parsed_dir = current_parsed_dir.resolve()
     candidates: list[tuple[float, Path]] = []
+
+    def _recency(parsed: Path) -> float:
+        # Sort by when messages.json was written, not the parsed_data dir's
+        # own mtime — the directory's mtime can drift (e.g. a sidecar file
+        # touched later) and not reflect the actual snapshot contents. Fall
+        # back to the directory mtime when messages.json is absent.
+        msgs = parsed / "messages.json"
+        try:
+            return msgs.stat().st_mtime
+        except OSError:
+            return parsed.stat().st_mtime
+
     for outer in repo_root.glob("tg_*"):
         if not outer.is_dir():
             continue
         # Flat layout: outer/parsed_data
         flat = outer / "parsed_data"
         if flat.is_dir() and flat.resolve() != current_parsed_dir:
-            candidates.append((flat.stat().st_mtime, flat))
+            candidates.append((_recency(flat), flat))
         # Nested layout: outer/tg_*/parsed_data
         for inner in outer.glob("tg_*"):
             if not inner.is_dir():
                 continue
             nested = inner / "parsed_data"
             if nested.is_dir() and nested.resolve() != current_parsed_dir:
-                candidates.append((nested.stat().st_mtime, nested))
+                candidates.append((_recency(nested), nested))
     if not candidates:
         return None
     candidates.sort(reverse=True)

@@ -30,6 +30,13 @@ def main() -> None:
     print(f"📖 OpenAPI docs: http://{args.host}:{args.port}/docs")
     print("\nPress Ctrl+C to stop\n")
 
+    if args.host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            f"WARNING: binding to non-loopback host {args.host!r} — this server has NO "
+            "authentication and will expose decrypted Telegram data to anyone on the network.",
+            file=sys.stderr,
+        )
+
     app = create_app(args.data_dir, account=args.account)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 

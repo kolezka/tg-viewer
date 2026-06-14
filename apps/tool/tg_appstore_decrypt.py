@@ -21,7 +21,7 @@ import hashlib
 import argparse
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from . import redact
 
@@ -425,8 +425,8 @@ def main():
     summary_file = output_dir / "decrypt_summary.json"
     with open(summary_file, 'w') as f:
         json.dump({
-            'timestamp': datetime.now().isoformat(),
-            'backup_dir': str(backup_dir),
+            'timestamp': datetime.now(tz=timezone.utc).isoformat(),
+            'backup_dir': redact.path(backup_dir),
             'total_rows': total_messages,
             'accounts': results
         }, f, indent=2)

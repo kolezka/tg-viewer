@@ -55,7 +55,6 @@ class TelegramDecryptor:
                 self.keys[f"tempkey_bytes"] = bytes.fromhex(hex_data).hex()
                 # Try different derivations
                 self.keys[f"tempkey_sha256"] = hashlib.sha256(bytes.fromhex(hex_data)).hexdigest()
-                self.keys[f"tempkey_sha1"] = hashlib.sha1(bytes.fromhex(hex_data)).hexdigest()
                 print(f"Processed tempkey: {tempkey_info.get('file', 'unknown')}")
         
     def find_databases(self) -> List[Path]:
