@@ -384,11 +384,10 @@ run_dev() {
     (cd "$SCRIPT_DIR/apps/web" && bun run css:watch) &
     local css_pid=$!
 
-    # Foreground: Bun dev server (Ctrl+C kills group)
-    trap "kill $api_pid $css_pid 2>/dev/null; exit" INT TERM
+    # Foreground: Bun dev server (Ctrl+C kills group). EXIT covers normal/set -e
+    # exit too, so the background api + css watchers don't get orphaned.
+    trap "kill $api_pid $css_pid 2>/dev/null" INT TERM EXIT
     (cd "$SCRIPT_DIR/apps/web" && bun run dev)
-
-    kill "$api_pid" "$css_pid" 2>/dev/null
 }
 
 run_clean() {
@@ -463,12 +462,11 @@ run_ghosts() {
         local p="$1"
         if [[ -d "$p/parsed_data" ]]; then
             echo "$p/parsed_data"
-        elif [[ -d "$p/tg_"*/parsed_data ]]; then
-            # The double-nested tg_*/tg_*/ layout that tg-backup.sh produces.
-            for inner in "$p"/tg_*/parsed_data; do [[ -d "$inner" ]] && { echo "$inner"; return; }; done
-        else
-            echo "$p"
+            return
         fi
+        # The double-nested tg_*/tg_*/ layout that tg-backup.sh produces.
+        for inner in "$p"/tg_*/parsed_data; do [[ -d "$inner" ]] && { echo "$inner"; return; }; done
+        echo "$p"
     }
 
     local old_parsed new_parsed
@@ -496,13 +494,15 @@ run_ghosts() {
     log "New: $(_redact_path "$new_parsed")"
 
     local out="$SCRIPT_DIR/ghosts_diff.json"
-    (cd "$SCRIPT_DIR/apps" && python3 -c "
-import json, sys
+    # Pass paths via env (not string interpolation) so a path containing a
+    # single quote can't break or inject into the Python source.
+    (cd "$SCRIPT_DIR/apps" && OLD_PARSED="$old_parsed" NEW_PARSED="$new_parsed" OUT="$out" python3 -c "
+import json, os, sys
 sys.path.insert(0, '.')
 from tool import ghost_detector
 from pathlib import Path
-result = ghost_detector.compare_snapshots(Path('$old_parsed'), Path('$new_parsed'))
-with open('$out', 'w') as f:
+result = ghost_detector.compare_snapshots(Path(os.environ['OLD_PARSED']), Path(os.environ['NEW_PARSED']))
+with open(os.environ['OUT'], 'w') as f:
     json.dump(result, f, indent=2, ensure_ascii=False)
 print()
 for acc, d in result['diffs'].items():
@@ -551,6 +551,7 @@ EOF
     "$BACKUP_SCRIPT" "$dest_dir" --batch
 
     # Find the actual backup dir (tg-backup.sh creates a tg_* subdir)
+    local backup_dir
     backup_dir=$(find_inner_backup_dir "$dest_dir")
     log "Using backup directory: $(_redact_path "$backup_dir")"
 
@@ -561,6 +562,7 @@ EOF
     run_parse "$backup_dir"
 
     # Step 4: Web UI
+    local data_dir
     data_dir="$backup_dir/parsed_data"
     if [[ -d "$data_dir" ]]; then
         echo ""

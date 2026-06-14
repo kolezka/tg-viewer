@@ -48,6 +48,9 @@ except ImportError:  # pragma: no cover — import guard
 
 _running = True
 
+# Rotate index.jsonl once it crosses this size so it never grows unbounded.
+INDEX_MAX_BYTES = 50 * 1024 * 1024
+
 
 def _log(msg: str) -> None:
     print(f"[watcher {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -90,19 +93,44 @@ def _should_capture(path: Path) -> bool:
     return any(name.startswith(p) for p in _CAPTURE_PREFIXES)
 
 
-def _sha256_of(path: Path, chunk: int = 1 << 20) -> str | None:
-    """Stream the file content into sha256. Returns None on read errors."""
-    h = hashlib.sha256()
-    try:
-        with open(path, "rb") as f:
-            while True:
-                data = f.read(chunk)
-                if not data:
-                    break
-                h.update(data)
-    except (OSError, PermissionError):
-        return None
-    return h.hexdigest()
+def _stream_into(path: Path, dst, chunk: int = 1 << 20) -> str | None:
+    """Open `path` once, stream its bytes into file object `dst` while hashing.
+
+    Returns the sha256 hex digest, or None on read error / empty read. The
+    file is read exactly once, so the bytes that land in `dst` are guaranteed
+    to be the bytes that produced the digest — Telegram can't swap the file
+    out from under us between hashing and copying.
+
+    A freshly-created file may not be fully written yet when FSEvents fires,
+    so a single short retry is allowed if the first attempt yields an empty
+    read or raises OSError. The retry's pause stays in this helper, off the
+    event-dispatch hot path.
+    """
+    for attempt in range(2):
+        h = hashlib.sha256()
+        got_any = False
+        try:
+            with open(path, "rb") as f:
+                while True:
+                    data = f.read(chunk)
+                    if not data:
+                        break
+                    got_any = True
+                    h.update(data)
+                    dst.write(data)
+            if got_any:
+                return h.hexdigest()
+        except (OSError, PermissionError):
+            pass
+        if attempt == 0:
+            # Discard whatever partial bytes we wrote and retry once.
+            try:
+                dst.seek(0)
+                dst.truncate(0)
+            except OSError:
+                return None
+            time.sleep(0.05)
+    return None
 
 
 class VaultWriter:
@@ -119,45 +147,65 @@ class VaultWriter:
         self.index_file = vault_dir / "index.jsonl"
         self.objects_dir.mkdir(parents=True, exist_ok=True)
         # Track sha→already-stored so we don't rehash on every event.
-        self._known: set[str] = {p.name for p in self.objects_dir.iterdir() if p.is_file()}
+        self._known: set[str] = {
+            p.name
+            for p in self.objects_dir.iterdir()
+            if p.is_file() and not p.name.startswith(".tmp-")
+        }
+        self._tmp_counter = 0
         _log(f"vault opened: {vault_dir}  ({len(self._known)} objects already present)")
 
     def capture(self, path: Path, event_type: str) -> None:
-        """Hash + store the file; append a single-line JSON record to index."""
+        """Hash + store the file; append a single-line JSON record to index.
+
+        The file is opened ONCE: its bytes are streamed into a tmp object
+        file while sha256 is computed in the same pass. This closes the
+        race where Telegram deletes or rewrites the file between a separate
+        hash pass and a separate copy pass (which could store wrong bytes
+        under a stale sha, or lose the file entirely). Only after a complete,
+        atomic os.replace does the object appear in objects/, so no
+        zero-length or partial object is ever left behind.
+        """
         try:
-            size = path.stat().st_size
-            mtime = path.stat().st_mtime
+            st = path.stat()
+            size = st.st_size
+            mtime = st.st_mtime
         except OSError:
             return
         if size == 0:
             return  # rsync's "vanishing source" or partial-file race
 
-        sha = _sha256_of(path)
-        if sha is None:
+        # Stream into a tmp file while hashing. The tmp name is unique per
+        # capture (pid+counter) so concurrent captures of the same content
+        # don't clobber each other's in-flight tmp.
+        self._tmp_counter += 1
+        tmp = self.objects_dir / f".tmp-{os.getpid()}-{self._tmp_counter}"
+        try:
+            with open(tmp, "wb") as dst:
+                sha = _stream_into(path, dst)
+        except OSError as exc:
+            _log(f"copy failed for {path}: {exc}")
+            self._unlink_quiet(tmp)
             return
 
-        target = self.objects_dir / sha
+        if sha is None:
+            # Read failed or file was empty/vanished — leave nothing behind.
+            self._unlink_quiet(tmp)
+            return
+
         novel = sha not in self._known
         if novel:
-            # Atomic copy via tmp file so a partially-written object never
-            # ends up in the vault index.
-            tmp = target.with_suffix(".tmp")
+            target = self.objects_dir / sha
             try:
-                with open(path, "rb") as src, open(tmp, "wb") as dst:
-                    while True:
-                        buf = src.read(1 << 20)
-                        if not buf:
-                            break
-                        dst.write(buf)
                 os.replace(tmp, target)
                 self._known.add(sha)
             except OSError as exc:
-                _log(f"copy failed for {path}: {exc}")
-                try:
-                    tmp.unlink()
-                except OSError:
-                    pass
+                _log(f"store failed for {path}: {exc}")
+                self._unlink_quiet(tmp)
                 return
+        else:
+            # Already have these bytes; discard the duplicate copy.
+            self._unlink_quiet(tmp)
 
         record = {
             "captured_at": time.time(),
@@ -168,10 +216,34 @@ class VaultWriter:
             "mtime": mtime,
             "novel": novel,
         }
-        with open(self.index_file, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(record) + "\n")
+        self._append_index(record)
         if novel:
             _log(f"captured {path.name} ({size}B, sha {sha[:12]})")
+
+    @staticmethod
+    def _unlink_quiet(p: Path) -> None:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+
+    def _append_index(self, record: dict) -> None:
+        """Append one JSON line, rotating index.jsonl if it grew too large."""
+        self._rotate_index_if_needed()
+        with open(self.index_file, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record) + "\n")
+
+    def _rotate_index_if_needed(self) -> None:
+        try:
+            if self.index_file.stat().st_size < INDEX_MAX_BYTES:
+                return
+        except OSError:
+            return  # no index yet, nothing to rotate
+        rotated = self.index_file.with_name(self.index_file.name + ".1")
+        try:
+            os.replace(self.index_file, rotated)  # atomic; clobbers old .1
+        except OSError as exc:
+            _log(f"index rotation failed: {exc}")
 
 
 class _Handler(FileSystemEventHandler):
@@ -184,10 +256,9 @@ class _Handler(FileSystemEventHandler):
             return
         p = Path(event.src_path)
         if _should_capture(p):
-            # Tiny pause so a freshly-created file has a chance to be fully
-            # written before we hash it. The watchdog FSEvents backend often
-            # fires for both create-and-write coalesced, but not always.
-            time.sleep(0.05)
+            # No sleep here: blocking the observer callback thread stalls
+            # every subsequent event. _stream_into() tolerates a not-yet-
+            # fully-written file with a single short retry of its own.
             self.vault.capture(p, "created")
 
     def on_modified(self, event) -> None:

@@ -27,7 +27,7 @@ IMPORT_DEST  ?= tg_imported
 IMPORT_SRC   := $(or $(strip $(filter-out import,$(MAKECMDGOALS))),$(SRC))
 
 TG      := ./tg-viewer
-TG_OPTS := $(if $(ACCOUNT),--account $(ACCOUNT)) $(if $(PORT),--port $(PORT)) $(if $(HOST),--host $(HOST))
+TG_OPTS := $(if $(ACCOUNT),--account '$(ACCOUNT)') $(if $(PORT),--port '$(PORT)') $(if $(HOST),--host '$(HOST)')
 
 .DEFAULT_GOAL := help
 
@@ -51,26 +51,26 @@ setup:  ## Install Python + frontend dependencies
 	$(TG) setup
 
 backup:  ## Create Telegram backup (DATA=./dest optional)
-	$(TG) backup $(DATA)
+	$(TG) backup '$(DATA)'
 
 decrypt:  ## Decrypt databases (DATA=./tg_.../ required)
 	@[ -n "$(DATA)" ] || { echo "DATA=./tg_.../ required" >&2; exit 2; }
-	$(TG) decrypt $(DATA) $(TG_OPTS)
+	$(TG) decrypt '$(DATA)' $(TG_OPTS)
 
 parse:  ## Parse Postbox binary (DATA=./tg_.../ required)
 	@[ -n "$(DATA)" ] || { echo "DATA=./tg_.../ required" >&2; exit 2; }
-	$(TG) parse $(DATA) $(TG_OPTS)
+	$(TG) parse '$(DATA)' $(TG_OPTS)
 
 webui:  ## Start web UI (DATA=./tg_.../parsed_data required)
 	@[ -n "$(DATA)" ] || { echo "DATA=./tg_.../parsed_data required" >&2; exit 2; }
-	$(TG) webui $(DATA) $(TG_OPTS)
+	$(TG) webui '$(DATA)' $(TG_OPTS)
 
 dev:  ## FastAPI + Bun HMR dev stack (DATA=./tg_.../parsed_data required)
 	@[ -n "$(DATA)" ] || { echo "DATA=./tg_.../parsed_data required" >&2; exit 2; }
-	$(TG) dev $(DATA) $(TG_OPTS)
+	$(TG) dev '$(DATA)' $(TG_OPTS)
 
 full:  ## Full pipeline: backup → decrypt → parse → webui
-	$(TG) full $(DATA) $(TG_OPTS)
+	$(TG) full '$(DATA)' $(TG_OPTS)
 
 import:  ## Import an already-copied account-* dir + reuse live key, then serve (make import /path/to/account-<id>)
 	@src="$(IMPORT_SRC)"; \

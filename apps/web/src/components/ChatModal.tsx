@@ -49,7 +49,7 @@ export default function ChatModal({ chat, onClose }: Props) {
             .reverse() // backend returns newest first; flip to chronological per page
             .map((m, i) => (
               <div
-                key={`${page}:${i}`}
+                key={`${m.peer_id ?? ""}:${m.timestamp ?? ""}:${i}`}
                 className={`conv-bubble ${
                   m.outgoing === true
                     ? "conv-bubble-outgoing"

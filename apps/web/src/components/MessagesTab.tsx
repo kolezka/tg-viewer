@@ -30,7 +30,7 @@ export default function MessagesTab() {
           <div className="space-y-3 max-h-[600px] overflow-y-auto">
             {data.messages.map((m, i) => (
               <div
-                key={i}
+                key={`${m.peer_id ?? ""}:${m.timestamp ?? ""}:${i}`}
                 className="border-b border-gray-100 pb-3 last:border-b-0"
               >
                 <div className="text-xs text-gray-500 mb-1">

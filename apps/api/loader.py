@@ -100,7 +100,15 @@ def load_telegram_data(data_dir: str | Path, account: str | None = None) -> AppS
             with open(summary_file) as f:
                 summary = json.load(f)
             if "backup_dir" in summary:
-                state.backup_dir = Path(summary["backup_dir"])
+                raw = Path(summary["backup_dir"])
+                # summary.json may carry a relative backup_dir (fixtures do);
+                # resolve it against the directory summary.json was loaded from.
+                # Always normalize to an absolute resolved path so the media
+                # route can perform a containment check. A backup_dir outside
+                # export_dir is a legitimate sibling layout, so don't reject it.
+                if not raw.is_absolute():
+                    raw = state.export_dir / raw
+                state.backup_dir = raw.resolve()
         except Exception:
             pass
 

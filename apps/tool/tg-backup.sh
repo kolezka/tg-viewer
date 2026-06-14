@@ -218,8 +218,10 @@ done
 if [[ -d "$APPSTORE_DIR/accounts-metadata" ]]; then
   log "Copying accounts-metadata..."
   mkdir -p "$BACKUP_DIR/accounts-metadata"
-  ld=$(_link_dest_args "accounts-metadata/")
-  rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$APPSTORE_DIR/accounts-metadata/" "$BACKUP_DIR/accounts-metadata/" || rc=$?
+  ld_args=(); ld_path=$(_link_dest_args "accounts-metadata/")
+  [[ -n "$ld_path" ]] && ld_args=("$ld_path")
+  rc=0
+  rsync "${RSYNC_OPTS[@]}" "${ld_args[@]}" "$APPSTORE_DIR/accounts-metadata/" "$BACKUP_DIR/accounts-metadata/" || rc=$?
   if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
     die "rsync failed with exit code ${rc:-0}"
   fi
@@ -235,8 +237,10 @@ fi
 if [[ -d "$APPSTORE_DIR/logs" ]]; then
   log "Copying Telegram MTProto logs..."
   mkdir -p "$BACKUP_DIR/logs"
-  ld=$(_link_dest_args "logs/")
-  rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$APPSTORE_DIR/logs/" "$BACKUP_DIR/logs/" || rc=$?
+  ld_args=(); ld_path=$(_link_dest_args "logs/")
+  [[ -n "$ld_path" ]] && ld_args=("$ld_path")
+  rc=0
+  rsync "${RSYNC_OPTS[@]}" "${ld_args[@]}" "$APPSTORE_DIR/logs/" "$BACKUP_DIR/logs/" || rc=$?
   if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
     die "rsync failed with exit code ${rc:-0}"
   fi
@@ -261,8 +265,10 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/postbox/db" ]]; then
     log "  Copying postbox database (messages)..."
     mkdir -p "$acct_backup/postbox/db"
-    ld=$(_link_dest_args "$dir_name/postbox/db/")
-    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/postbox/db/" "$acct_backup/postbox/db/" || rc=$?
+    ld_args=(); ld_path=$(_link_dest_args "$dir_name/postbox/db/")
+    [[ -n "$ld_path" ]] && ld_args=("$ld_path")
+    rc=0
+    rsync "${RSYNC_OPTS[@]}" "${ld_args[@]}" "$d/postbox/db/" "$acct_backup/postbox/db/" || rc=$?
     # rsync exit 24 = vanishing source files (normal for active app), 23 = partial transfer
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
@@ -276,8 +282,10 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/postbox/media" ]]; then
     log "  Copying postbox media index..."
     mkdir -p "$acct_backup/postbox/media"
-    ld=$(_link_dest_args "$dir_name/postbox/media/")
-    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/postbox/media/" "$acct_backup/postbox/media/" || rc=$?
+    ld_args=(); ld_path=$(_link_dest_args "$dir_name/postbox/media/")
+    [[ -n "$ld_path" ]] && ld_args=("$ld_path")
+    rc=0
+    rsync "${RSYNC_OPTS[@]}" "${ld_args[@]}" "$d/postbox/media/" "$acct_backup/postbox/media/" || rc=$?
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
     fi
@@ -288,8 +296,10 @@ for d in "${ACCOUNT_DIRS[@]}"; do
   if [[ -d "$d/cached" ]]; then
     log "  Copying cached data..."
     mkdir -p "$acct_backup/cached"
-    ld=$(_link_dest_args "$dir_name/cached/")
-    rsync "${RSYNC_OPTS[@]}" ${ld:+"$ld"} "$d/cached/" "$acct_backup/cached/" || rc=$?
+    ld_args=(); ld_path=$(_link_dest_args "$dir_name/cached/")
+    [[ -n "$ld_path" ]] && ld_args=("$ld_path")
+    rc=0
+    rsync "${RSYNC_OPTS[@]}" "${ld_args[@]}" "$d/cached/" "$acct_backup/cached/" || rc=$?
     if [[ ${rc:-0} -ne 0 && ${rc:-0} -ne 23 && ${rc:-0} -ne 24 ]]; then
       die "  rsync failed with exit code ${rc:-0}"
     fi

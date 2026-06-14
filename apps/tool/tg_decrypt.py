@@ -107,15 +107,21 @@ class TelegramDecryptor:
                     conn.execute("SELECT count(*) FROM sqlite_master")
                     print(f"✓ Successfully decrypted {db_path.name} with key variant: {key_variant[:20]}...")
                     return conn
-                except Exception as e:
+                except sqlcipher3.DatabaseError:
+                    # Wrong key (or not-yet-decryptable schema) — try the next variant.
                     continue
-                    
+
             conn.close()
             return None
-            
-        except Exception as e:
+
+        except sqlcipher3.DatabaseError as e:
             print(f"Failed to connect to {db_path}: {e}")
             return None
+        except Exception as e:
+            # Non-key error (I/O, library, etc.) — surface it distinctly instead of
+            # masquerading as a wrong-key failure.
+            print(f"ERROR opening {db_path} (non-key error): {type(e).__name__}: {e}")
+            raise
             
     def decrypt_database(self, db_path: Path) -> Optional[sqlite3.Connection]:
         """Try to decrypt a database with available keys"""
@@ -159,9 +165,10 @@ class TelegramDecryptor:
             table_info = {}
             for table in tables:
                 try:
-                    cursor = conn.execute(f"PRAGMA table_info({table})")
+                    q = '"' + table.replace('"', '""') + '"'
+                    cursor = conn.execute(f'PRAGMA table_info({q})')
                     columns = cursor.fetchall()
-                    cursor = conn.execute(f"SELECT COUNT(*) FROM {table}")
+                    cursor = conn.execute(f'SELECT COUNT(*) FROM {q}')
                     row_count = cursor.fetchone()[0]
                     
                     table_info[table] = {

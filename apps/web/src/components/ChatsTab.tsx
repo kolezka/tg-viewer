@@ -19,6 +19,9 @@ interface Props {
   initialSearch?: string;
 }
 
+// Defensive cap to avoid rendering an unbounded chat list (no virtualization).
+const MAX_CHATS = 500;
+
 export default function ChatsTab({ initialSearch = "" }: Props) {
   const [search, setSearch] = useState(initialSearch);
   const [type, setType] = useState("");
@@ -62,7 +65,12 @@ export default function ChatsTab({ initialSearch = "" }: Props) {
       {data && (
         <div className="space-y-2">
           {data.length === 0 && <div className="text-gray-500">No chats match.</div>}
-          {data.map((c) => (
+          {data.length > MAX_CHATS && (
+            <div className="text-xs text-gray-500">
+              Showing first {MAX_CHATS} of {data.length} — refine your search.
+            </div>
+          )}
+          {data.slice(0, MAX_CHATS).map((c) => (
             <button
               key={c.id}
               onClick={() => setActive(c)}

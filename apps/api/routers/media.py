@@ -86,15 +86,23 @@ def serve_media(account_id: str, filename: str, request: Request):
     media_dir = state.backup_dir / account_id / "postbox" / "media"
     filepath = media_dir / filename
 
-    # NOTE: deliberately NOT calling filepath.resolve() before checking
-    # containment. Telegram backups commonly include symlinks pointing back
-    # to the live install (e.g. secret-chat media files), and resolving the
-    # symlink takes the path outside `media_dir` even though the URL itself
-    # is safe. The filename-level check above ('..', '/', '\\') already
-    # prevents URL-based traversal — that's the only attacker-controlled
-    # input here.
+    # The filename-level check above ('..', '/', '\\') already prevents
+    # URL-based traversal — that's the only attacker-controlled input here.
+    # Telegram backups commonly include symlinks pointing elsewhere *within*
+    # the backup tree (e.g. secret-chat media files), so a media file may be a
+    # symlink whose resolved target still lives under backup_dir. We allow that
+    # but reject any resolved path that escapes the backup root (defense in
+    # depth). is_relative_to is available on Python 3.9+.
+    resolved = filepath.resolve()
+    root = state.backup_dir.resolve()
+    if not resolved.is_relative_to(root):
+        raise HTTPException(status_code=403, detail="Path outside backup root")
 
     if not filepath.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
-    return FileResponse(str(filepath), media_type=detect_mime(filepath))
+    return FileResponse(
+        str(filepath),
+        media_type=detect_mime(filepath),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

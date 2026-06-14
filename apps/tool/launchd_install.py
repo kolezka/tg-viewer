@@ -8,11 +8,13 @@ with a stable CDHash lets TCC remember consent.
 from __future__ import annotations
 
 import argparse
+import html
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from shlex import quote
 
 DEFAULT_DAEMON_DEST_NAME = "tg_continuous"
 DEFAULT_VAULT_DIR_NAME = "tg_vault"
@@ -44,20 +46,26 @@ _INFO_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 """
 
 _LAUNCHER_TEMPLATE = """#!/bin/bash
-exec '{python_path}' \\
+exec {python_path} \\
 {indented_args}    "$@"
 """
 
 
 def render_info_plist(bundle_id: str, display_name: str) -> str:
-    return _INFO_PLIST_TEMPLATE.format(bundle_id=bundle_id, display_name=display_name)
+    return _INFO_PLIST_TEMPLATE.format(
+        bundle_id=html.escape(bundle_id, quote=True),
+        display_name=html.escape(display_name, quote=True),
+    )
 
 
 def render_launcher_script(python_path: str, args: list[str]) -> str:
     # Each arg gets its own line with a trailing backslash; "$@" on the last
-    # line swallows the dangling backslash from the final arg line.
-    indented = "".join(f"    '{a}' \\\n" for a in args)
-    return _LAUNCHER_TEMPLATE.format(python_path=python_path, indented_args=indented)
+    # line swallows the dangling backslash from the final arg line. shlex.quote
+    # makes values with spaces, quotes, or apostrophes shell-safe.
+    indented = "".join(f"    {quote(a)} \\\n" for a in args)
+    return _LAUNCHER_TEMPLATE.format(
+        python_path=quote(python_path), indented_args=indented
+    )
 
 
 _LAUNCHAGENT_PLIST_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
@@ -84,10 +92,10 @@ def render_launchagent_plist(
     label: str, launcher_path: Path, working_dir: Path, log_file: Path
 ) -> str:
     return _LAUNCHAGENT_PLIST_TEMPLATE.format(
-        label=label,
-        working_dir=str(working_dir),
-        launcher_path=str(launcher_path),
-        log_file=str(log_file),
+        label=html.escape(label, quote=True),
+        working_dir=html.escape(str(working_dir), quote=True),
+        launcher_path=html.escape(str(launcher_path), quote=True),
+        log_file=html.escape(str(log_file), quote=True),
     )
 
 

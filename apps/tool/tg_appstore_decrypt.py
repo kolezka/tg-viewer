@@ -95,11 +95,21 @@ def decrypt_tempkey(encrypted_path: str, password: str = "no-matter-key") -> Tup
     aes_key = digest[:32]
     aes_iv = digest[-16:]
 
+    if len(encrypted) < 52:
+        raise ValueError(
+            f"Encrypted tempkey too short: {len(encrypted)} bytes (need at least 52)"
+        )
+
     cipher = Cipher(algorithms.AES(aes_key), modes.CBC(aes_iv), backend=default_backend())
     decryptor = cipher.decryptor()
     plaintext = decryptor.update(encrypted) + decryptor.finalize()
 
     print(f"  Decrypted tempkey size: {len(plaintext)} bytes")
+
+    if len(plaintext) < 52:
+        raise ValueError(
+            f"Decrypted tempkey too short: {len(plaintext)} bytes (need at least 52)"
+        )
 
     db_key = plaintext[:32]
     db_salt = plaintext[32:48]
@@ -115,7 +125,7 @@ def decrypt_tempkey(encrypted_path: str, password: str = "no-matter-key") -> Tup
         print("  Hash verification: PASSED")
     else:
         print(f"  Hash verification: FAILED (stored={stored_hash}, computed={computed_hash})")
-        print("  WARNING: Key may be invalid or encrypted with a local passcode")
+        raise ValueError("Key verification failed — wrong password or corrupt file")
 
     return db_key, db_salt
 
@@ -160,8 +170,9 @@ def analyze_schema(conn) -> Dict[str, Any]:
     for name, obj_type in cursor.fetchall():
         if obj_type == 'table':
             try:
-                info = conn.execute(f"PRAGMA table_info('{name}')").fetchall()
-                count = conn.execute(f"SELECT COUNT(*) FROM '{name}'").fetchone()[0]
+                q = '"' + name.replace('"', '""') + '"'
+                info = conn.execute(f'PRAGMA table_info({q})').fetchall()
+                count = conn.execute(f'SELECT COUNT(*) FROM {q}').fetchone()[0]
                 schema[name] = {
                     'columns': [(col[1], col[2]) for col in info],
                     'row_count': count
@@ -188,7 +199,8 @@ def extract_all_data(conn, schema: Dict, output_dir: Path, account_id: str):
             continue
 
         try:
-            cursor = conn.execute(f"SELECT * FROM '{table_name}'")
+            q = '"' + table_name.replace('"', '""') + '"'
+            cursor = conn.execute(f'SELECT * FROM {q}')
             columns = [desc[0] for desc in cursor.description]
             rows = cursor.fetchall()
 

@@ -283,13 +283,15 @@ def _scan_line(
     # 5. Secret-chat lifecycle. Match each EncryptedChat.* variant; pull
     #    out id/accessHash/date when present.
     for m in _SECRET_CHAT_RE.finditer(line):
-        args = m.group("args") or ""
+        # `args` truncates at the first inner `)` (e.g. `gA: Bytes(...)`), so
+        # field values after such a nested paren are lost. Run the kv lookups
+        # against the full line instead; we keep only the `kind` from the match.
         data = {
             "kind": m.group("kind"),
-            "chat_id": _parse_kv_int(args, "id"),
+            "chat_id": _parse_kv_int(line, "id"),
         }
         for fk in ("accessHash", "date", "adminId", "participantId"):
-            v = _parse_kv_int(args, fk)
+            v = _parse_kv_int(line, fk)
             if v is not None:
                 data[fk] = v
         yield _make_record(
@@ -300,8 +302,11 @@ def _scan_line(
 def parse_log_file(path: Path) -> list[dict[str, Any]]:
     """Parse a single `log-*.txt` file. Streams line by line.
 
-    Returns a flat list. Logs can be large (1 MB × dozens) but processing is
-    O(n) with no buffering across lines, so memory stays bounded.
+    Returns a flat list. Reading is O(lines) with no cross-line buffering, but
+    every extracted event is accumulated into the returned list — so peak
+    memory scales with the number of matched events, not the file size. The
+    caller (`parse_logs_dir`) further holds the concatenation of all files'
+    events fully in memory; this is not a streaming pipeline.
     """
     out: list[dict[str, Any]] = []
     source = path.name

@@ -245,7 +245,7 @@ def classify_media_type(mime: str, filename: str) -> str:
 def extract_text_from_message(value: bytes) -> Optional[str]:
     """Extract message text from t7 serialized value.
 
-    Postbox uses length-prefixed strings in both LE and BE uint32 formats.
+    Postbox uses length-prefixed strings in little-endian uint32 format.
     The main message text is typically the longest printable string found
     in the first 100 bytes of the value, excluding known metadata fields.
     """
@@ -253,31 +253,30 @@ def extract_text_from_message(value: bytes) -> Optional[str]:
     best_len = 0
 
     for offset in range(4, min(100, len(value) - 4)):
-        for endian in ('<I', '>I'):
-            try:
-                strlen = struct.unpack(endian, value[offset:offset + 4])[0]
-            except struct.error:
-                continue
+        try:
+            strlen = struct.unpack('<I', value[offset:offset + 4])[0]
+        except struct.error:
+            continue
 
-            if strlen < 2 or strlen > 100000 or offset + 4 + strlen > len(value):
-                continue
+        if strlen < 2 or strlen > 100000 or offset + 4 + strlen > len(value):
+            continue
 
-            try:
-                decoded = value[offset + 4:offset + 4 + strlen].decode('utf-8')
-            except (UnicodeDecodeError, ValueError):
-                continue
+        try:
+            decoded = value[offset + 4:offset + 4 + strlen].decode('utf-8')
+        except (UnicodeDecodeError, ValueError):
+            continue
 
-            printable_count = sum(1 for c in decoded if c.isprintable() or c in '\n\r\t')
-            if printable_count / max(len(decoded), 1) < 0.5:
-                continue
+        printable_count = sum(1 for c in decoded if c.isprintable() or c in '\n\r\t')
+        if printable_count / max(len(decoded), 1) < 0.5:
+            continue
 
-            stripped = decoded.strip()
-            if _looks_like_metadata(stripped):
-                continue
+        stripped = decoded.strip()
+        if _looks_like_metadata(stripped):
+            continue
 
-            if len(stripped) > best_len:
-                best_text = stripped
-                best_len = len(stripped)
+        if len(stripped) > best_len:
+            best_text = stripped
+            best_len = len(stripped)
 
     return best_text
 
@@ -513,7 +512,10 @@ def build_media_catalog(
         if file_count % 500 == 0:
             print(f"    Scanning media: {file_count} files...")
 
-        stat = filepath.stat()
+        try:
+            stat = filepath.stat()
+        except OSError:
+            continue
         mime = detect_mime_type(filepath)
         media_type = classify_media_type(mime, filepath.name)
 
@@ -591,7 +593,7 @@ def parse_messages_from_t7(
 
     while True:
         rows = conn.execute(
-            f'SELECT key, value FROM t7 WHERE length(value) > 20 LIMIT {batch_size} OFFSET {offset}'
+            f'SELECT key, value FROM t7 WHERE length(value) > 20 ORDER BY rowid LIMIT {batch_size} OFFSET {offset}'
         ).fetchall()
 
         if not rows:

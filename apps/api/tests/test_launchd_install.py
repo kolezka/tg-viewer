@@ -22,12 +22,26 @@ def test_render_launcher_script_quotes_args_and_appends_dollar_at():
     )
     lines = out.splitlines()
     assert lines[0] == "#!/bin/bash"
-    assert lines[1] == "exec '/usr/bin/python3' \\"
-    assert "    '-m' \\" in lines
-    assert "    'tool.x' \\" in lines
-    assert "    '--flag' \\" in lines
-    assert "    'value' \\" in lines
+    # shlex.quote leaves shell-safe tokens unquoted.
+    assert lines[1] == "exec /usr/bin/python3 \\"
+    assert "    -m \\" in lines
+    assert "    tool.x \\" in lines
+    assert "    --flag \\" in lines
+    assert "    value \\" in lines
     assert '    "$@"' in lines
+
+
+def test_render_launcher_script_quotes_unsafe_values():
+    """A path containing an apostrophe must be shell-safely quoted, not
+    naively wrapped in single quotes (which would break/inject)."""
+    import subprocess
+
+    out = launchd_install.render_launcher_script(
+        "/weird path/python", ["-m", "tool.x", "--dest", "/repo's dir/x"]
+    )
+    # Must be syntactically valid bash despite the embedded apostrophe.
+    r = subprocess.run(["bash", "-n"], input=out, text=True, capture_output=True)
+    assert r.returncode == 0, r.stderr
 
 
 def test_render_launcher_script_is_byte_stable():

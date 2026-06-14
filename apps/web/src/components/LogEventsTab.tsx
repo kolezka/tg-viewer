@@ -30,7 +30,7 @@ export default function LogEventsTab() {
     per_page: perPage,
   });
 
-  const totalPages = data ? Math.max(1, Math.ceil(data.total / perPage)) : 1;
+  const totalPages = data?.total_pages ?? 1;
 
   return (
     <div>

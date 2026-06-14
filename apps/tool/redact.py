@@ -23,6 +23,7 @@ from pathlib import Path
 REDACT: bool = False
 
 _TG_BACKUP_SEGMENT = re.compile(r"tg_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}")
+_ACCOUNT_SEGMENT = re.compile(r"account-\d+")
 
 
 def set_enabled(flag: bool) -> None:
@@ -46,10 +47,16 @@ def hexkey(value) -> str:
 
 
 def path(value) -> str:
-    """Mask the tg_<timestamp> segment of a backup path, preserving any tail."""
+    """Mask sensitive segments of a backup path, preserving any tail.
+
+    Replaces the `tg_<timestamp>` backup segment with `<backup>` and any
+    `account-<numericid>` segment with `<account>`, so REDACT=True doesn't
+    leak account IDs embedded in paths.
+    """
     if not REDACT:
         return str(value)
-    return _TG_BACKUP_SEGMENT.sub("<backup>", str(value))
+    masked = _TG_BACKUP_SEGMENT.sub("<backup>", str(value))
+    return _ACCOUNT_SEGMENT.sub("<account>", masked)
 
 
 def name(value) -> str:
@@ -104,6 +111,12 @@ if __name__ == "__main__":
     assert path("/tmp/tg_2026-04-15_12-58-12/parsed_data") == "/tmp/<backup>/parsed_data"
     assert path("./tg_2026-04-15_12-58-12") == "./<backup>"
     assert path(Path("/a/tg_2026-04-15_12-58-12/b")) == "/a/<backup>/b"
+    # account-<id> segments are masked too
+    assert path("/data/account-123456789/parsed_data") == "/data/<account>/parsed_data"
+    assert (
+        path("/data/tg_2026-04-15_12-58-12/account-42/x")
+        == "/data/<backup>/<account>/x"
+    )
     # Non-matching path passes through
     assert path("/no/timestamp/here") == "/no/timestamp/here"
 

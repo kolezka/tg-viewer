@@ -99,13 +99,24 @@ def plan_pruning(snapshots: Iterable[Path], now_seconds: float) -> list[Path]:
     snapshot in each bucket survives; the others (and anything in `expired`)
     go to the deletion list. `recent` bucket keeps everything.
     """
-    snaps = sorted(snapshots, key=lambda p: p.stat().st_mtime, reverse=True)
+    # Stat each snapshot exactly once. A snapshot removed mid-cycle (its
+    # stat() raising) is simply skipped rather than aborting the whole plan.
+    stamped: list[tuple[float, Path]] = []
+    for p in snapshots:
+        try:
+            stamped.append((p.stat().st_mtime, p))
+        except OSError:
+            continue
+    stamped.sort(key=lambda t: t[0], reverse=True)
+    snaps = [p for _, p in stamped]
+    mtimes = {p: m for m, p in stamped}
+
     survivors: set[Path] = set()
     keep_by_bucket: dict[tuple[str, int], Path] = {}
     delete: list[Path] = []
 
     for s in snaps:
-        age = now_seconds - s.stat().st_mtime
+        age = now_seconds - mtimes[s]
         granularity, bucket_id = _bucket(age, now_seconds)
         if granularity == "recent":
             survivors.add(s)
@@ -145,9 +156,13 @@ def _run_backup_with_link_dest(
     # tg-backup.sh prints the new backup path on its own log line; we
     # rediscover it from the filesystem rather than parsing stdout.
     before = {p.name for p in dest_root.glob("tg_*") if p.is_dir()}
-    proc = subprocess.run(cmd, check=False)
+    # Capture output rather than inheriting our stdout/stderr (which would
+    # produce an unbounded, untagged log). Surface stderr only on failure.
+    proc = subprocess.run(cmd, check=False, capture_output=True, text=True)
     if proc.returncode not in (0, 23, 24):  # 23/24 are rsync-partial codes, fine
         _log(f"backup failed (rc={proc.returncode})")
+        if proc.stderr:
+            _log(f"backup stderr: {proc.stderr.strip()}")
         return None
     after = {p.name for p in dest_root.glob("tg_*") if p.is_dir()}
     new_dirs = after - before
