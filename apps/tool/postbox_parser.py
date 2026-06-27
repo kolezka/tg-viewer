@@ -579,6 +579,67 @@ def parse_message_key(key: bytes) -> Dict[str, Any]:
     return result
 
 
+# Postbox MessageFlags bit (Message.swift): set on messages received from the
+# peer, clear on messages sent by the local user.
+MESSAGE_FLAG_INCOMING = 0x04
+
+# MessageDataFlags optional fields, in serialization order, with the byte size
+# each writes when its bit is set in the dataFlags byte (MessageHistoryTable.swift).
+_MESSAGE_OPTIONAL_FIELDS = (
+    (0x01, 8),  # hasGloballyUniqueId -> Int64
+    (0x02, 4),  # hasGlobalTags       -> UInt32
+    (0x04, 8),  # hasGroupingKey      -> Int64
+    (0x08, 4),  # hasGroupInfo        -> UInt32 (stableId)
+    (0x10, 4),  # hasLocalTags        -> UInt32
+    (0x20, 8),  # hasThreadId         -> Int64
+)
+
+
+def decode_message_flags(value: bytes) -> Optional[int]:
+    """Decode the Postbox MessageFlags UInt32 from a serialized t7 message value.
+
+    Layout (MessageHistoryTable.swift justInsertMessage):
+        type Int8 (1) | stableId UInt32 (4) | stableVersion UInt32 (4) |
+        dataFlags Int8 (1) | <optional fields per dataFlags bits> |
+        flags UInt32 | tags UInt32
+
+    The optional block between `dataFlags` (offset 9) and `flags` is
+    variable-length, so the flags field is at offset 10 only when dataFlags == 0.
+    Earlier builds hardcoded offset 10 and therefore read direction from random
+    id bytes for every message carrying a globallyUniqueId, threadId, grouping
+    key, etc. — mixing sent and received messages.
+
+    Returns the MessageFlags value, or None if the value is too short to contain it.
+    """
+    if len(value) < 14:
+        return None
+    offset = 10
+    data_flags = value[9]
+    for bit, size in _MESSAGE_OPTIONAL_FIELDS:
+        if data_flags & bit:
+            offset += size
+    if offset + 4 > len(value):
+        return None
+    return struct.unpack('<I', value[offset:offset + 4])[0]
+
+
+def message_is_outgoing(peer_id: int, value: bytes) -> bool:
+    """Decide whether a t7 message was sent by the local user (vs received).
+
+    Channels/broadcast (peer hi-word == 2) are stored from the subscriber's
+    perspective and treated as incoming. Everything else (users, bots, groups,
+    secret chats) reads the authoritative MessageFlags.Incoming bit, decoded at
+    the correct, dataFlags-dependent offset.
+    """
+    hi = (peer_id >> 32) & 0xFFFFFFFF
+    if hi == 2:
+        return False
+    flags = decode_message_flags(value)
+    if flags is None:
+        return False
+    return not bool(flags & MESSAGE_FLAG_INCOMING)
+
+
 def parse_messages_from_t7(
     conn, peers: Dict[int, Dict], media_dir: Optional[Path] = None
 ) -> List[Dict[str, Any]]:
@@ -621,29 +682,12 @@ def parse_messages_from_t7(
             if not text and not media:
                 continue
 
-            # Determine outgoing flag based on message format.
-            #
-            # Channels (hi=2): always incoming from a user's perspective.
-            # Secret chats (hi=3): direction is in KEY bytes 8-11 (namespace
-            #   tag), since the value's byte 10 is part of a random message ID,
-            #   not a flags byte. tag=1 means outgoing, tag=2 means incoming.
-            #   Verified by cross-referencing user-confirmed sent messages.
-            # Everything else (users, bots, groups): byte 10 of the VALUE
-            #   contains Postbox StoreMessageFlags; bit 2 (0x04) is the
-            #   `Incoming` flag — set when received, clear when sent.
-            hi = (peer_id >> 32) & 0xFFFFFFFF
-            if hi == 2:
-                is_outgoing = False
-            elif hi == 3:
-                if len(key) >= 12:
-                    secret_tag = struct.unpack('>I', key[8:12])[0]
-                    is_outgoing = (secret_tag == 1)
-                else:
-                    is_outgoing = False
-            elif len(value) > 10:
-                is_outgoing = not bool(value[10] & 0x04)
-            else:
-                is_outgoing = False
+            # Direction from the authoritative Postbox MessageFlags.Incoming bit,
+            # decoded at its real (dataFlags-dependent) offset. See
+            # decode_message_flags / message_is_outgoing. This also covers secret
+            # chats correctly — their value byte 10 is a random id byte, which is
+            # exactly why the prior byte-10 heuristic mixed sent/received messages.
+            is_outgoing = message_is_outgoing(peer_id, value)
 
             msg = {
                 'peer_id': peer_id,
