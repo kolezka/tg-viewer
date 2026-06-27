@@ -70,3 +70,7 @@ tg_vault/
 # (paths in their launcher scripts are absolute to this checkout, so they
 # don't transfer between machines anyway).
 apps/launchd-bundles/
+
+# graphify knowledge graph — generated output (graph.json/html, wiki, report).
+# Rebuilt locally by `graphify` + the post-commit hook; not meant to be tracked.
+graphify-out/
