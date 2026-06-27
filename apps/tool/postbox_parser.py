@@ -336,6 +336,8 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
         idx = value.find(b'\x01\x69\x01', pos)
         if idx < 0:
             break
+        if idx + 11 > len(value):  # marker too close to EOF for a full int64
+            break
         file_id = struct.unpack('<q', value[idx + 3:idx + 11])[0]
         if file_id == 0:
             pos = idx + 11
@@ -646,98 +648,117 @@ def parse_messages_from_t7(
     """Parse all messages from t7 table."""
     messages = []
     batch_size = 10000
-    offset = 0
 
     media_index = build_media_index(media_dir) if media_dir else set()
     if media_index:
         print(f"    Media index: {len(media_index)} files")
 
+    # Keyset pagination on rowid. LIMIT/OFFSET re-scans every skipped row each
+    # batch (O(n^2) on 100k+ message tables); `rowid > last` is linear.
+    last_rowid = 0
+    processed = 0
+    parse_errors = 0
     while True:
         rows = conn.execute(
-            f'SELECT key, value FROM t7 WHERE length(value) > 20 ORDER BY rowid LIMIT {batch_size} OFFSET {offset}'
+            'SELECT rowid, key, value FROM t7 '
+            'WHERE length(value) > 20 AND rowid > ? ORDER BY rowid LIMIT ?',
+            (last_rowid, batch_size),
         ).fetchall()
 
         if not rows:
             break
 
-        for key, value in rows:
-            if len(key) < 16:
+        for rowid, key, value in rows:
+            last_rowid = rowid
+            processed += 1
+            # One malformed row must never abort the whole account export — a
+            # single bad serialized value used to take down all 100k+ messages.
+            try:
+                if len(key) < 16:
+                    continue
+
+                key_info = parse_message_key(key)
+                peer_id = key_info.get('peer_id')
+                if not peer_id:
+                    continue
+
+                text = extract_text_from_message(value)
+                media = resolve_media_files(extract_media_refs(value), media_index) if media_index else []
+
+                # For media-only messages, clear garbage text (binary noise)
+                if text:
+                    printable = sum(1 for c in text if c.isprintable() or c in '\n\r\t')
+                    if printable / max(len(text), 1) < 0.5:
+                        text = None
+
+                # Skip messages with no text and no media
+                if not text and not media:
+                    continue
+
+                # Direction from the authoritative Postbox MessageFlags.Incoming
+                # bit, decoded at its real (dataFlags-dependent) offset. See
+                # decode_message_flags / message_is_outgoing. This also covers
+                # secret chats correctly — their value byte 10 is a random id
+                # byte, which is exactly why the prior byte-10 heuristic mixed
+                # sent/received messages.
+                is_outgoing = message_is_outgoing(peer_id, value)
+
+                msg = {
+                    'peer_id': peer_id,
+                    'text': text or '',
+                    'outgoing': is_outgoing,
+                }
+
+                if media:
+                    msg['media'] = media
+
+                timestamp = key_info.get('timestamp')
+                if timestamp:
+                    msg['timestamp'] = timestamp
+                    msg['date'] = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+                peer_info = peers.get(peer_id)
+
+                if peer_info:
+                    name_parts = []
+                    if 'first_name' in peer_info:
+                        name_parts.append(peer_info['first_name'])
+                    if 'last_name' in peer_info:
+                        name_parts.append(peer_info['last_name'])
+                    if name_parts:
+                        msg['peer_name'] = ' '.join(name_parts)
+                    if 'username' in peer_info:
+                        msg['peer_username'] = peer_info['username']
+
+                    # For secret chats: resolve remote peer name
+                    hi = (peer_id >> 32) & 0xFFFFFFFF
+                    if hi == 3 and not msg.get('peer_name'):
+                        remote_id = peer_info.get('_remote_peer_id_lo4')
+                        remote_le8 = peer_info.get('_remote_peer_id_le8')
+                        remote_peer = peers.get(remote_id) if remote_id else None
+                        if not remote_peer and remote_le8:
+                            remote_peer = peers.get(remote_le8)
+                        if remote_peer:
+                            rname = remote_peer.get('first_name', '')
+                            if 'last_name' in remote_peer:
+                                rname += ' ' + remote_peer['last_name']
+                            msg['peer_name'] = rname.strip()
+                            if 'username' in remote_peer:
+                                msg['peer_username'] = remote_peer['username']
+                            msg['secret_chat'] = True
+
+                messages.append(msg)
+            except Exception as e:
+                parse_errors += 1
+                if parse_errors <= 5:
+                    print(f"    t7 row parse error (rowid {rowid}): {e}")
                 continue
 
-            key_info = parse_message_key(key)
-            peer_id = key_info.get('peer_id')
-            if not peer_id:
-                continue
+        if processed % 50000 == 0:
+            print(f"    Processed {processed:,} rows, {len(messages):,} messages extracted...")
 
-            text = extract_text_from_message(value)
-            media = resolve_media_files(extract_media_refs(value), media_index) if media_index else []
-
-            # For media-only messages, clear garbage text (binary noise)
-            if text:
-                printable = sum(1 for c in text if c.isprintable() or c in '\n\r\t')
-                if printable / max(len(text), 1) < 0.5:
-                    text = None
-
-            # Skip messages with no text and no media
-            if not text and not media:
-                continue
-
-            # Direction from the authoritative Postbox MessageFlags.Incoming bit,
-            # decoded at its real (dataFlags-dependent) offset. See
-            # decode_message_flags / message_is_outgoing. This also covers secret
-            # chats correctly — their value byte 10 is a random id byte, which is
-            # exactly why the prior byte-10 heuristic mixed sent/received messages.
-            is_outgoing = message_is_outgoing(peer_id, value)
-
-            msg = {
-                'peer_id': peer_id,
-                'text': text or '',
-                'outgoing': is_outgoing,
-            }
-
-            if media:
-                msg['media'] = media
-
-            timestamp = key_info.get('timestamp')
-            if timestamp:
-                msg['timestamp'] = timestamp
-                msg['date'] = datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
-
-            peer_info = peers.get(peer_id)
-
-            if peer_info:
-                name_parts = []
-                if 'first_name' in peer_info:
-                    name_parts.append(peer_info['first_name'])
-                if 'last_name' in peer_info:
-                    name_parts.append(peer_info['last_name'])
-                if name_parts:
-                    msg['peer_name'] = ' '.join(name_parts)
-                if 'username' in peer_info:
-                    msg['peer_username'] = peer_info['username']
-
-                # For secret chats: resolve remote peer name
-                hi = (peer_id >> 32) & 0xFFFFFFFF
-                if hi == 3 and not msg.get('peer_name'):
-                    remote_id = peer_info.get('_remote_peer_id_lo4')
-                    remote_le8 = peer_info.get('_remote_peer_id_le8')
-                    remote_peer = peers.get(remote_id) if remote_id else None
-                    if not remote_peer and remote_le8:
-                        remote_peer = peers.get(remote_le8)
-                    if remote_peer:
-                        rname = remote_peer.get('first_name', '')
-                        if 'last_name' in remote_peer:
-                            rname += ' ' + remote_peer['last_name']
-                        msg['peer_name'] = rname.strip()
-                        if 'username' in remote_peer:
-                            msg['peer_username'] = remote_peer['username']
-                        msg['secret_chat'] = True
-
-            messages.append(msg)
-
-        offset += batch_size
-        if offset % 50000 == 0:
-            print(f"    Processed {offset:,} rows, {len(messages):,} messages extracted...")
+    if parse_errors:
+        print(f"    Skipped {parse_errors:,} unparseable t7 row(s)")
 
     return messages
 
@@ -915,20 +936,58 @@ def export_account(
         except Exception as e:
             print(f"    History diff error: {e}")
 
-    # Step 4: Create combined export, deduping FTS entries that already exist in t7.
-    # Key on (peer_id, text) so identical replies in different chats are kept distinct.
-    seen = {(m.get('peer_id'), m.get('text', '')) for m in messages_t7 if m.get('text')}
+    # Step 4: Create combined export, deduping FTS entries that already exist in
+    # t7 and attributing each surviving FTS row to its peer.
+    #
+    # FTS `peer_ref` carries the *bare* peer id ("p<id>") without the namespace
+    # hi-word, while t7 `peer_id` is the composite (namespace<<32 | id). Index
+    # peers by both forms so a bare FTS ref resolves to the same composite id t7
+    # uses: that lets dedup match across the namespace boundary AND lets
+    # conversation grouping attribute FTS-only rows (the deleted-message gold)
+    # to a real peer instead of a single 'unknown' bucket.
+    peers_by_bare: Dict[int, Dict] = {}
+    for pid, prec in peers.items():
+        if isinstance(pid, int):
+            peers_by_bare.setdefault(pid & 0xFFFFFFFF, prec)
+
+    def _resolve_fts_peer(peer_ref: Any) -> Tuple[Optional[int], Optional[Dict]]:
+        raw = str(peer_ref if peer_ref is not None else '').lstrip('p')
+        try:
+            bare = int(raw) if raw else None
+        except ValueError:
+            return None, None
+        if bare is None:
+            return None, None
+        prec = peers.get(bare) or peers_by_bare.get(bare)
+        return (prec['id'] if prec else bare), prec
+
+    # Dedup key carries both the composite peer_id and its bare lower-32-bit
+    # form so a bare FTS ref matches a namespaced t7 peer.
+    seen = set()
+    for m in messages_t7:
+        if not m.get('text'):
+            continue
+        pid = m.get('peer_id')
+        seen.add((pid, m['text']))
+        if isinstance(pid, int):
+            seen.add((pid & 0xFFFFFFFF, m['text']))
+
     fts_dedup = []
     for m in messages_fts:
         text = m.get('text', '')
-        peer_key = str(m.get('peer_ref', '')).lstrip('p')
-        try:
-            peer_int = int(peer_key) if peer_key else None
-        except ValueError:
-            peer_int = None
-        if (peer_int, text) in seen:
+        resolved_id, prec = _resolve_fts_peer(m.get('peer_ref'))
+        if (resolved_id, text) in seen:
             continue
-        fts_dedup.append(m)
+        enriched = dict(m)
+        if resolved_id is not None:
+            enriched['peer_id'] = resolved_id
+        if prec:
+            name_parts = [prec[k] for k in ('first_name', 'last_name') if prec.get(k)]
+            if name_parts:
+                enriched['peer_name'] = ' '.join(name_parts)
+            if prec.get('username'):
+                enriched['peer_username'] = prec['username']
+        fts_dedup.append(enriched)
     all_messages = messages_t7 + fts_dedup
 
     all_messages.sort(key=lambda m: m.get('timestamp', 0), reverse=True)
@@ -985,7 +1044,15 @@ def export_account(
     convos_dir.mkdir(exist_ok=True)
     for convo in sorted_convos:
         export_convo = {**convo, 'all_peer_ids': sorted(convo['all_peer_ids'])}
-        safe_name = re.sub(r'[^\w\-]', '_', str(convo.get('peer_username') or convo.get('peer_name') or str(convo.get('peer_id', 'unknown'))))[:80]
+        pid = convo.get('peer_id')
+        label = convo.get('peer_username') or convo.get('peer_name') or (
+            str(pid) if pid is not None else 'unknown'
+        )
+        safe_name = re.sub(r'[^\w\-]', '_', str(label))[:80]
+        # Suffix with peer_id so two distinct peers whose names sanitize to the
+        # same string don't overwrite each other's file.
+        if pid is not None:
+            safe_name = f"{safe_name}-{pid}"
         with open(convos_dir / f'{safe_name}.json', 'w', encoding='utf-8') as f:
             json.dump(export_convo, f, indent=2, ensure_ascii=False)
 

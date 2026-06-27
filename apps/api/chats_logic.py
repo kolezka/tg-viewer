@@ -26,6 +26,19 @@ def compute_chats(
             if peer.get("is_bot"):
                 bots.add(str(peer.get("id", "")))
 
+    def _has_fts(ids: list[str]) -> bool:
+        # FTS peer_refs are bare ids; conversation ids may be namespaced
+        # composites (namespace<<32 | id), so compare both forms.
+        for aid in ids:
+            if aid in fts_peer_refs:
+                return True
+            try:
+                if str(int(aid) & 0xFFFFFFFF) in fts_peer_refs:
+                    return True
+            except (TypeError, ValueError):
+                pass
+        return False
+
     def _resolve_type(pid: int | str | None, all_ids: list[str]) -> str:
         base = peer_type(pid) if isinstance(pid, int) else "other"
         if base == "user" and any(aid in bots for aid in all_ids):
@@ -42,7 +55,7 @@ def compute_chats(
                 )
                 if chat_id and chat_id not in chats:
                     pid = conv.get("peer_id") or 0
-                    has_fts = any(aid in fts_peer_refs for aid in all_ids)
+                    has_fts = _has_fts(all_ids)
                     chats[chat_id] = {
                         "id": chat_id,
                         "all_peer_ids": all_ids,
@@ -81,7 +94,7 @@ def compute_chats(
                     "name": chat_name or f"Chat {chat_id}",
                     "username": msg.get("peer_username") or "",
                     "type": _resolve_type(pid, [chat_id]),
-                    "has_fts": chat_id in fts_peer_refs,
+                    "has_fts": _has_fts([chat_id]),
                     "message_count": 0,
                     "last_message": None,
                     "databases": [db_name],

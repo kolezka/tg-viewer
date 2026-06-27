@@ -30,6 +30,22 @@ def test_messages_search(fastapi_client):
     assert data["total"] == 2
 
 
+def test_messages_search_ignores_structural_fields(fastapi_client):
+    # '111' is peer 111's id/phone but appears in no message TEXT — a text
+    # search must not match on serialized dict structure.
+    r = fastapi_client.get("/api/messages?search=111")
+    assert r.status_code == 200
+    assert r.json()["total"] == 0
+
+
+def test_messages_search_matches_text_and_peer_name(fastapi_client):
+    # 'msg to bob' (t7) + 'deleted message to bob' (fts) — the dup 'msg to bob'
+    # fts row is deduped, so 2 distinct hits.
+    r = fastapi_client.get("/api/messages?search=bob")
+    assert r.status_code == 200
+    assert r.json()["total"] == 2
+
+
 def test_messages_does_not_mutate_loaded_data(fastapi_client):
     """Regression: old Flask code added _database/_account in place. Must not leak."""
     fastapi_client.get("/api/messages")

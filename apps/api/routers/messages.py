@@ -73,10 +73,22 @@ def list_messages(
 
             text = msg.get("text", "")
             if text:
-                t7_keys.add((str(msg.get("peer_id", "")), text))
+                pid = msg.get("peer_id", "")
+                t7_keys.add((str(pid), text))
+                # Also key on the bare lower-32-bit id so an FTS peer_ref (which
+                # drops the namespace hi-word) dedupes against a namespaced peer.
+                if isinstance(pid, int):
+                    t7_keys.add((str(pid & 0xFFFFFFFF), text))
 
-            if needle and needle not in str(annotated).lower():
-                continue
+            # Search the message text and peer labels — NOT the serialized dict,
+            # which would match on structural noise (field names, ids, flags).
+            if needle:
+                hay = " ".join(
+                    str(annotated.get(k, ""))
+                    for k in ("text", "peer_name", "peer_username")
+                ).lower()
+                if needle not in hay:
+                    continue
 
             all_messages.append(annotated)
 
@@ -105,13 +117,11 @@ def list_messages(
                 }
             )
 
-    try:
-        all_messages.sort(
-            key=lambda x: x.get("timestamp", x.get("date", 0)) or 0,
-            reverse=True,
-        )
-    except Exception:
-        pass
+    def _ts(x: dict[str, Any]) -> int:
+        ts = x.get("timestamp")
+        return ts if isinstance(ts, (int, float)) else 0
+
+    all_messages.sort(key=_ts, reverse=True)
 
     start = (page - 1) * per_page
     end = start + per_page
