@@ -99,6 +99,14 @@ def serve_media(account_id: str, filename: str, request: Request):
     media_dir = state.backup_dir / account_id / "postbox" / "media"
     filepath = media_dir / filename
 
+    # A dangling symlink is a tombstone for media Telegram purged (see the
+    # `deleted` media_type). It resolves to an absolute path in the live
+    # container, so without this branch it would trip the traversal guard
+    # below and answer 403 — misleading for 133 everyday files, and it would
+    # bury a genuine escape attempt among them in the logs.
+    if filepath.is_symlink() and not filepath.exists():
+        raise HTTPException(status_code=410, detail="Media purged by Telegram")
+
     # The filename-level check above ('..', '/', '\\') already prevents
     # URL-based traversal — that's the only attacker-controlled input here.
     # Telegram backups commonly include symlinks pointing elsewhere *within*

@@ -113,3 +113,47 @@ def test_tombstones_are_reachable_and_keep_their_evidence(fastapi_client):
         assert item["deleted_target"] == "telegram-cloud-document-4-5780730778723817295"
     finally:
         catalog.pop()
+
+
+def test_purged_media_reports_gone_not_a_security_error(fastapi_client, tmp_path):
+    """A tombstone is an everyday case, not an attempted escape.
+
+    A dangling symlink resolves to its absolute target in Telegram's live
+    container, which is outside the backup root — so it used to trip the
+    traversal guard and answer 403 "Path outside backup root". With 133 of
+    them in a real backup that both misleads the caller and drowns any genuine
+    traversal attempt in the logs.
+    """
+    import os
+
+    state = fastapi_client.app.state.app_state
+    media_dir = state.backup_dir / "account-1000000001" / "postbox" / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    link = media_dir / "purged.mp4"
+    os.symlink("/nonexistent/live/container/purged", link)
+    try:
+        r = fastapi_client.get("/api/media/account-1000000001/purged.mp4")
+
+        assert r.status_code == 410, f"expected 410 Gone, got {r.status_code}"
+        assert "outside" not in r.json()["detail"].lower()
+    finally:
+        link.unlink()
+
+
+def test_traversal_guard_still_answers_403(fastapi_client, tmp_path):
+    """The escape hatch the 410 branch sits in front of must stay shut."""
+    import os
+
+    state = fastapi_client.app.state.app_state
+    media_dir = state.backup_dir / "account-1000000001" / "postbox" / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_bytes(b"secret")
+    link = media_dir / "escape.txt"
+    os.symlink(outside, link)
+    try:
+        r = fastapi_client.get("/api/media/account-1000000001/escape.txt")
+
+        assert r.status_code == 403
+    finally:
+        link.unlink()
