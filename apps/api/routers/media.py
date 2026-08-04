@@ -13,10 +13,12 @@ router = APIRouter(prefix="/api", tags=["media"])
 
 ACCOUNT_RE = re.compile(r"^account-\d+$")
 
-# Peer avatars live in the same media directory but are not conversation
-# media — they outnumbered real photos 7:1. They stay reachable through their
-# own type filter, and are kept out of the unfiltered gallery.
-HIDDEN_UNLESS_REQUESTED = {"avatar"}
+# Types that live in the same media directory but would drown the gallery.
+# Both stay reachable through their own type filter.
+#   avatar  — peer profile pictures, not conversation media (7:1 vs photos)
+#   deleted — tombstones for purged media; they have no bytes to display, so
+#             showing them by default would be a wall of placeholders
+HIDDEN_UNLESS_REQUESTED = {"avatar", "deleted"}
 
 
 @router.get("/media", response_model=MediaPage)

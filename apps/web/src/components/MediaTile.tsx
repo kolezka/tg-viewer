@@ -27,6 +27,9 @@ export function resolveType(item: MediaEntry): "photo" | "video" | "audio" | "st
   // Avatars are catalogued under their own type so the gallery can filter
   // them; for rendering they are ordinary images.
   if (t === "avatar") return "photo";
+  // A tombstone has no bytes. Short-circuit before the mime_type fallback,
+  // which would otherwise send every tile after a 404 it can't satisfy.
+  if (t === "deleted") return "document";
 
   const mime = (item.mime_type ?? "").toLowerCase();
   if (mime.startsWith("image/gif")) return "gif";

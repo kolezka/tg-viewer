@@ -75,3 +75,41 @@ def test_avatars_are_reachable_through_their_own_filter(fastapi_client):
         assert data["media"][0]["size"] == 10240
     finally:
         catalog.pop()
+
+
+def _add_tombstone(fastapi_client):
+    state = fastapi_client.app.state.app_state
+    catalog = state.databases["account-1000000001"]["media_catalog"]
+    catalog.append({
+        "filename": "telegram-cloud-document-4-5780730778723817295.mp3",
+        "mime_type": "audio/mpeg",
+        "media_type": "deleted",
+        "size": None,
+        "deleted_target": "telegram-cloud-document-4-5780730778723817295",
+    })
+    return catalog
+
+
+def test_tombstones_are_excluded_from_the_unfiltered_gallery(fastapi_client):
+    """They have no bytes; by default the gallery would be a wall of stubs."""
+    catalog = _add_tombstone(fastapi_client)
+    try:
+        data = fastapi_client.get("/api/media").json()
+
+        assert data["total"] == 1
+        assert data["counts"]["all"] == 1
+        assert data["counts"]["deleted"] == 1
+    finally:
+        catalog.pop()
+
+
+def test_tombstones_are_reachable_and_keep_their_evidence(fastapi_client):
+    catalog = _add_tombstone(fastapi_client)
+    try:
+        item = fastapi_client.get("/api/media?type=deleted").json()["media"][0]
+
+        assert item["size"] is None
+        assert item["mime_type"] == "audio/mpeg", "extension is the only type record"
+        assert item["deleted_target"] == "telegram-cloud-document-4-5780730778723817295"
+    finally:
+        catalog.pop()

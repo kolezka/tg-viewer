@@ -58,7 +58,9 @@ parsed_data/
 }
 ```
 
-`media_type` is one of: `photo`, `video`, `audio`, `gif`, `sticker`, `document`, `avatar`. `linked_message` is null when the file can't be cross-referenced to a parsed message.
+`media_type` is one of: `photo`, `video`, `audio`, `gif`, `sticker`, `document`, `avatar`, `deleted`. `linked_message` is null when the file can't be cross-referenced to a parsed message.
+
+`deleted` marks a tombstone for media Telegram has purged. Telegram gives a cached file a second, extension-bearing name by symlinking `<name>.jpg` at it; when the bytes are dropped the link is left dangling. Such an entry has `size: null` (there is nothing to serve — `/api/media/...` returns 404 for it) and a `deleted_target` naming the cache file it pointed at. Its `mime_type` comes from the extension in the dangling name, which is the **only** surviving record of the media's real type: the bare-suffix cache files carry no extension at all. Links whose target is still present in the backup are duplicate views and are not catalogued twice. Like `avatar`, tombstones are excluded from the unfiltered gallery and requested with `?type=deleted`.
 
 `avatar` marks a peer profile picture (`telegram-peer-photo-size-*`) — catalogued for completeness but excluded from the unfiltered `/api/media` gallery, since avatars outnumber conversation photos several times over (3,422 vs 483 in the reference backup). Request them explicitly with `?type=avatar`.
 

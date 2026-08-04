@@ -45,7 +45,21 @@ export default function MediaModal({ item, onClose }: Props) {
           </button>
         </div>
         <div className="flex-1 flex items-center justify-center bg-black overflow-hidden">
-          {type === "photo" || type === "sticker" || type === "gif" ? (
+          {item.media_type === "deleted" ? (
+            <div className="bg-white p-10 text-center text-sm">
+              <div className="font-medium">Media purged by Telegram</div>
+              <p className="mt-2 text-gray-600">
+                Only a dangling reference survives. Its name records the
+                original type ({item.mime_type || "unknown"}); the bytes are gone
+                from both the backup and the live app.
+              </p>
+              {item.deleted_target ? (
+                <p className="mt-2 font-mono text-xs break-all text-gray-500">
+                  pointed at {item.deleted_target}
+                </p>
+              ) : null}
+            </div>
+          ) : type === "photo" || type === "sticker" || type === "gif" ? (
             <img src={url} alt={item.filename} className="max-h-full max-w-full object-contain" />
           ) : type === "video" ? (
             <video src={url} poster={poster} controls className="max-h-full max-w-full" />

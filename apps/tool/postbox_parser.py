@@ -16,6 +16,7 @@ Tables in Telegram Postbox:
 
 import struct
 import json
+import mimetypes
 import re
 import sys
 import os
@@ -583,6 +584,27 @@ def build_media_catalog(
 
     covered_previews = set(doc_previews.values()) | superseded_photos
 
+    # Telegram gives a cached file a second, extension-bearing name by
+    # symlinking `<name>.jpg` at it. When the bytes are later purged the link
+    # is left dangling — and because `is_file()` is False for a broken symlink,
+    # every one of them used to fall out of the catalog unseen. They are the
+    # only surviving record that the media existed, and the extension they
+    # carry is the only place its real type is written down (the bare-suffix
+    # files have none). Links whose target we still hold are just duplicate
+    # views and stay out.
+    tombstones: List[Tuple[str, str]] = []
+    for f in media_dir.iterdir():
+        if not f.is_symlink() or f.exists():
+            continue
+        if f.name.endswith('_partial') or f.name.endswith('_partial.meta'):
+            continue
+        try:
+            target = os.path.basename(os.readlink(f))
+        except OSError:
+            continue
+        if target not in on_disk:
+            tombstones.append((f.name, target))
+
     # Build filename -> message media info lookup from messages.json
     filename_to_msg: Dict[str, Dict[str, Any]] = {}
     for msg in messages:
@@ -661,7 +683,30 @@ def build_media_catalog(
 
         catalog.append(entry)
 
-    print(f"    Media catalog: {len(catalog)} files ({file_count} scanned)")
+    for name, target in sorted(tombstones):
+        # The message referenced the target (the real cache name), not the
+        # extension-bearing alias, so linkage is looked up under the target.
+        msg_info = filename_to_msg.get(target)
+        catalog.append({
+            'filename': name,
+            'mime_type': mimetypes.guess_type(name)[0] or 'application/octet-stream',
+            # No bytes survive. 0 would read as a legitimately empty file.
+            'size': None,
+            'width': None,
+            'height': None,
+            'media_type': 'deleted',
+            'thumbnail': None,
+            'deleted_target': target,
+            'linked_message': {
+                'peer_id': msg_info['peer_id'],
+                'peer_name': msg_info.get('peer_name'),
+                'timestamp': msg_info.get('timestamp'),
+                'date': msg_info.get('date'),
+            } if msg_info else None,
+        })
+
+    print(f"    Media catalog: {len(catalog)} files "
+          f"({file_count} scanned, {len(tombstones)} deleted-media tombstones)")
     return catalog
 
 

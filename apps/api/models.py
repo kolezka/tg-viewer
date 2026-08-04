@@ -85,6 +85,9 @@ class MediaItem(BaseModel):
     width: int | None = None
     height: int | None = None
     duration: float | None = None
+    # Set only on `media_type == "deleted"`: the cache filename this dangling
+    # symlink pointed at before Telegram purged the bytes.
+    deleted_target: str | None = None
 
 
 class MediaPage(BaseModel):

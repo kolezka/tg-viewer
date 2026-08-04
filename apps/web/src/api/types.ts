@@ -566,6 +566,8 @@ export interface components {
             height?: number | null;
             /** Duration */
             duration?: number | null;
+            /** Deleted Target */
+            deleted_target?: string | null;
         };
         /** MediaPage */
         MediaPage: {

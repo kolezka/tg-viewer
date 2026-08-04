@@ -15,8 +15,9 @@ const TYPES: { key: string; label: string }[] = [
   { key: "document", label: "Documents" },
   { key: "sticker", label: "Stickers" },
   { key: "gif", label: "GIFs" },
-  // Peer avatars are excluded from "All" server-side; this is their way in.
+  // Both are excluded from "All" server-side; these are their way in.
   { key: "avatar", label: "Avatars" },
+  { key: "deleted", label: "Deleted" },
 ];
 
 export default function MediaTab() {
