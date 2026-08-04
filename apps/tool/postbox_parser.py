@@ -427,9 +427,17 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
 def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, Any]]:
     """Resolve media refs to actual filenames on disk.
 
-    Telegram caches media under four naming schemes depending on origin:
+    Telegram caches media under five naming schemes depending on origin:
       • `telegram-cloud-photo-size-{dc}-{fid}-{suffix}` — multi-size cloud photos
       • `telegram-cloud-document-{dc}-{fid}`           — cloud documents
+      • `telegram-cloud-document-size-{dc}-{fid}-{s}`  — that document's preview,
+                                                        tried last: when Telegram
+                                                        has purged the full file
+                                                        the preview is the only
+                                                        surviving copy (231 such
+                                                        orphans in the reference
+                                                        backup, 133 of them still
+                                                        referenced by a message)
       • `secret-file-{fid}-{dc}[.ext]`                 — secret-chat E2E media
                                                         (incoming from peer)
       • `local-file-{fid}` / `local-file--{abs}`       — outgoing photos before
@@ -444,7 +452,9 @@ def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, An
     not pinned during extraction we sweep DCs 1..10. local-file is dc-less.
     """
     resolved = []
-    photo_suffixes = ['y', 'x', 'w', 'm', 'c', 's', 'a', 'b']
+    # Largest first, so a message points at the best copy on disk. `p`/`u` are
+    # rarer variants that also occur in real caches.
+    photo_suffixes = ['y', 'x', 'w', 'm', 'c', 's', 'a', 'b', 'p', 'u']
     # Common extensions Telegram appends to secret-file caches (and the
     # bare-no-extension form which is most common).
     secret_ext_suffixes = ['', '.jpg', '.mp4', '.mp3', '.webm', '.ogg', '.png']
@@ -459,6 +469,12 @@ def resolve_media_files(refs: List[Dict], media_index: set) -> List[Dict[str, An
             return cand
         for ext in secret_ext_suffixes:
             cand = f"secret-file-{fid}-{dc}{ext}"
+            if cand in media_index:
+                return cand
+        # Last resort: the document's preview. Only reached when the full file
+        # is absent, so a live document is never shadowed by its own stub.
+        for suffix in photo_suffixes:
+            cand = f"telegram-cloud-document-size-{dc}-{fid}-{suffix}"
             if cand in media_index:
                 return cand
         return None
@@ -531,7 +547,41 @@ def build_media_catalog(
         if m and f"telegram-cloud-document-{m.group(1)}-{m.group(2)}" in on_disk:
             doc_previews[f"telegram-cloud-document-{m.group(1)}-{m.group(2)}"] = name
 
-    covered_previews = set(doc_previews.values())
+    # A cloud photo is cached at several sizes under one file_id, and each size
+    # was its own gallery item. Keep the largest copy and hang the smallest off
+    # it as the thumbnail. Ranking by byte size rather than by suffix letter is
+    # deliberate: the suffix alphabet (y/x/w/m/c/s/a/b/p/u) has no documented
+    # total order, but the bytes on disk are unambiguous.
+    photo_re = re.compile(r'^telegram-cloud-photo-size-(\d+)-(-?\d+)-([a-z]+)$')
+    photo_sizes: Dict[tuple, List[Tuple[int, str]]] = {}
+    for name in on_disk:
+        m = photo_re.match(name)
+        if not m:
+            continue
+        try:
+            nbytes = (media_dir / name).stat().st_size
+        except OSError:
+            continue
+        photo_sizes.setdefault((m.group(1), m.group(2)), []).append((nbytes, name))
+
+    photo_thumbs: Dict[str, str] = {}
+    superseded_photos: set = set()
+    # kept filename -> the variants it absorbed, so linkage can be inherited
+    folded_into: Dict[str, List[str]] = {}
+    for variants in photo_sizes.values():
+        if len(variants) < 2:
+            continue
+        variants.sort()
+        largest = variants[-1][1]
+        photo_thumbs[largest] = variants[0][1]
+        dropped = [n for _, n in variants[:-1]]
+        superseded_photos.update(dropped)
+        folded_into[largest] = dropped
+
+    for full, preview in doc_previews.items():
+        folded_into.setdefault(full, []).append(preview)
+
+    covered_previews = set(doc_previews.values()) | superseded_photos
 
     # Build filename -> message media info lookup from messages.json
     filename_to_msg: Dict[str, Dict[str, Any]] = {}
@@ -586,22 +636,19 @@ def build_media_catalog(
             'width': None,
             'height': None,
             'media_type': media_type,
-            'thumbnail': doc_previews.get(filepath.name),
+            'thumbnail': doc_previews.get(filepath.name) or photo_thumbs.get(filepath.name),
             'linked_message': None,
         }
 
-        # For photos, find a smaller Telegram variant for thumbnails
-        # Telegram stores photos with suffixes: y(largest), x, w, m, c, s(smallest)
-        if media_type == 'photo' and 'telegram-cloud-photo-size-' in filepath.name:
-            base = filepath.name.rsplit('-', 1)[0]  # strip the suffix
-            for thumb_suffix in ['s', 'm', 'c']:
-                thumb_name = base + '-' + thumb_suffix
-                if (media_dir / thumb_name).is_file():
-                    entry['thumbnail'] = thumb_name
-                    break
-
-        # Link to message if available
+        # Link to message if available. A message may have resolved to a size
+        # variant that folding just superseded, so fall back to any sibling's
+        # linkage — otherwise collapsing the duplicates would lose the caption.
         msg_info = filename_to_msg.get(filepath.name)
+        if not msg_info:
+            for sibling in folded_into.get(filepath.name, ()):
+                msg_info = filename_to_msg.get(sibling)
+                if msg_info:
+                    break
         if msg_info:
             entry['width'] = msg_info.get('width')
             entry['height'] = msg_info.get('height')
