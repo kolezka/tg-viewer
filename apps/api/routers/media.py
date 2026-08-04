@@ -13,6 +13,11 @@ router = APIRouter(prefix="/api", tags=["media"])
 
 ACCOUNT_RE = re.compile(r"^account-\d+$")
 
+# Peer avatars live in the same media directory but are not conversation
+# media — they outnumbered real photos 7:1. They stay reachable through their
+# own type filter, and are kept out of the unfiltered gallery.
+HIDDEN_UNLESS_REQUESTED = {"avatar"}
+
 
 @router.get("/media", response_model=MediaPage)
 def list_media(
@@ -31,7 +36,10 @@ def list_media(
         if account and db_name != account:
             continue
         for entry in db_data.get("media_catalog", []):
-            if type and entry.get("media_type") != type:
+            if type:
+                if entry.get("media_type") != type:
+                    continue
+            elif entry.get("media_type") in HIDDEN_UNLESS_REQUESTED:
                 continue
             if needle:
                 hay_parts = [
@@ -51,11 +59,14 @@ def list_media(
 
     items.sort(key=_sort_key)
 
+    # "all" must match what the unfiltered gallery actually shows, so the
+    # hidden types are counted under their own key but excluded from the total.
     counts: dict[str, int] = {"all": 0}
     for db_data in state.databases.values():
         for entry in db_data.get("media_catalog", []):
-            counts["all"] += 1
             mt = entry.get("media_type") or "document"
+            if mt not in HIDDEN_UNLESS_REQUESTED:
+                counts["all"] += 1
             counts[mt] = counts.get(mt, 0) + 1
 
     total = len(items)

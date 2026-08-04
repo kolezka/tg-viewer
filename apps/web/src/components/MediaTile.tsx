@@ -21,9 +21,12 @@ interface MediaEntry {
  * to the missing-file placeholder via onError) — that matches the old
  * inline-JS UI's heuristic.
  */
-function resolveType(item: MediaEntry): "photo" | "video" | "audio" | "sticker" | "gif" | "document" {
+export function resolveType(item: MediaEntry): "photo" | "video" | "audio" | "sticker" | "gif" | "document" {
   const t = (item.media_type ?? "").toLowerCase();
   if (t === "photo" || t === "video" || t === "audio" || t === "sticker" || t === "gif") return t;
+  // Avatars are catalogued under their own type so the gallery can filter
+  // them; for rendering they are ordinary images.
+  if (t === "avatar") return "photo";
 
   const mime = (item.mime_type ?? "").toLowerCase();
   if (mime.startsWith("image/gif")) return "gif";

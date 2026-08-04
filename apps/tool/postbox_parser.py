@@ -298,12 +298,26 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
        the dc_id and file_id together. Older parser builds missed this and
        therefore failed to link any secret-chat media to its on-disk file.
 
+    3. Cloud-resource form — by far the most common (field `f` inside an `s`
+       container), which every cloud photo/document in a regular chat uses:
+         01 73 0b 01 66 01 <8b LE file_id>
+       Forms 1 and 2 alone linked 1.2% of a 14k-file backup: form 1's `01 69 01`
+       marker mostly matches random byte alignments, and its ids never hit disk.
+       Derived by locating known on-disk file_ids inside real t7 blobs and
+       histogramming the preceding bytes — `01 66 01` preceded 376,594 of them.
+
     Returns a deduplicated list with keys: file_id, dc_id, width, height.
     """
     refs = []
 
     def _add(file_id: int, dc_id: int, w: int = 0, h: int = 0) -> None:
         if file_id == 0:
+            return
+        # A genuine file_id is a full-width 64-bit value. Ids whose low 32 bits
+        # are all zero (0x12_00000000 and friends) are a small integer read from
+        # a misaligned offset — an artifact of scanning for short byte markers,
+        # never something Telegram put on disk.
+        if not (file_id & 0xFFFFFFFF):
             return
         if any(r['file_id'] == file_id for r in refs):
             return
@@ -388,6 +402,24 @@ def extract_media_refs(value: bytes) -> List[Dict[str, Any]]:
             w, h = _scan_dimensions(idx)
             _add(file_id, dc_id, w, h)
         pos = idx + 4
+
+    # --- Form 3: cloud-resource field `f` (01 66 01 + int64 LE) ---
+    # dc_id is not adjacent here, so leave it at 0 and let resolve_media_files
+    # sweep DCs 1..10 against the on-disk index.
+    pos = 0
+    while pos < len(value) - 10:
+        idx = value.find(b'\x01\x66\x01', pos)
+        if idx < 0 or idx + 11 > len(value):
+            break
+        try:
+            file_id = struct.unpack('<q', value[idx + 3:idx + 11])[0]
+        except struct.error:
+            pos = idx + 3
+            continue
+        if abs(file_id) > 1_000_000_000:
+            w, h = _scan_dimensions(idx)
+            _add(file_id, 0, w, h)
+        pos = idx + 11
 
     return refs
 
@@ -486,6 +518,21 @@ def build_media_catalog(
     if not media_dir.is_dir():
         return []
 
+    # Telegram stores a low-resolution preview of every cloud document next to
+    # the document itself (`-size-` infix, ~3 KB against ~75 KB). Listing both
+    # made 5,077 of 14,457 gallery items 3 KB stubs. Fold each preview into its
+    # full file's `thumbnail`; keep only the ones whose full file is absent,
+    # since there the preview is the sole surviving copy.
+    doc_preview_re = re.compile(r'^telegram-cloud-document-size-(\d+)-(-?\d+)-([a-z])$')
+    on_disk = {f.name for f in media_dir.iterdir() if f.is_file()}
+    doc_previews: Dict[str, str] = {}
+    for name in on_disk:
+        m = doc_preview_re.match(name)
+        if m and f"telegram-cloud-document-{m.group(1)}-{m.group(2)}" in on_disk:
+            doc_previews[f"telegram-cloud-document-{m.group(1)}-{m.group(2)}"] = name
+
+    covered_previews = set(doc_previews.values())
+
     # Build filename -> message media info lookup from messages.json
     filename_to_msg: Dict[str, Dict[str, Any]] = {}
     for msg in messages:
@@ -509,6 +556,8 @@ def build_media_catalog(
             continue
         if filepath.name.endswith('_partial') or filepath.name.endswith('_partial.meta'):
             continue
+        if filepath.name in covered_previews:
+            continue
 
         file_count += 1
         if file_count % 500 == 0:
@@ -521,14 +570,23 @@ def build_media_catalog(
         mime = detect_mime_type(filepath)
         media_type = classify_media_type(mime, filepath.name)
 
+        # Peer avatars are not chat media. They outnumbered real photos 7:1 in
+        # the gallery; give them their own type so the UI can filter them into
+        # a dedicated tab instead of burying conversation media.
+        if filepath.name.startswith('telegram-peer-photo-size-'):
+            media_type = 'avatar'
+
         entry = {
             'filename': filepath.name,
             'mime_type': mime,
-            'size_bytes': stat.st_size,
+            # Key must stay 'size': api.models.MediaItem reads `size`, and
+            # Pydantic silently drops anything else — which is how every item
+            # ended up rendering its size as "—".
+            'size': stat.st_size,
             'width': None,
             'height': None,
             'media_type': media_type,
-            'thumbnail': None,
+            'thumbnail': doc_previews.get(filepath.name),
             'linked_message': None,
         }
 

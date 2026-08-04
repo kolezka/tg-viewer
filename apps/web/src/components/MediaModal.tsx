@@ -1,6 +1,7 @@
 import { api, type Schemas } from "../api/client";
 import { formatTimestamp, formatBytes, formatDuration } from "../lib/format";
 import { useModal } from "../lib/useModal";
+import { resolveType } from "./MediaTile";
 
 interface Props {
   item: Schemas["MediaItem"];
@@ -14,7 +15,13 @@ export default function MediaModal({ item, onClose }: Props) {
     | { peer_name?: string; timestamp?: number }
     | null
     | undefined;
-  const type = item.media_type;
+  // Same resolution the grid uses, so a tile and its modal never disagree —
+  // reading media_type raw meant new types (e.g. `avatar`) silently degraded
+  // to a download link.
+  const type = resolveType(item);
+  // Telegram's `-size-` preview, folded in by the parser. Without it a video
+  // opens on its first frame, which for the webm Telegram ships is black.
+  const poster = item.thumbnail ? api.mediaUrl(item.account, item.thumbnail) : undefined;
 
   return (
     <div
@@ -41,7 +48,7 @@ export default function MediaModal({ item, onClose }: Props) {
           {type === "photo" || type === "sticker" || type === "gif" ? (
             <img src={url} alt={item.filename} className="max-h-full max-w-full object-contain" />
           ) : type === "video" ? (
-            <video src={url} controls className="max-h-full max-w-full" />
+            <video src={url} poster={poster} controls className="max-h-full max-w-full" />
           ) : type === "audio" ? (
             <audio src={url} controls className="w-full p-5" />
           ) : (

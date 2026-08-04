@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMedia } from "../api/queries";
 import { type Schemas } from "../api/client";
 import { useDebouncedValue } from "../lib/useDebouncedValue";
+import { formatTimestamp } from "../lib/format";
 import Pagination from "./Pagination";
 import MediaModal from "./MediaModal";
 import MediaTile from "./MediaTile";
@@ -14,6 +15,8 @@ const TYPES: { key: string; label: string }[] = [
   { key: "document", label: "Documents" },
   { key: "sticker", label: "Stickers" },
   { key: "gif", label: "GIFs" },
+  // Peer avatars are excluded from "All" server-side; this is their way in.
+  { key: "avatar", label: "Avatars" },
 ];
 
 export default function MediaTab() {
@@ -59,15 +62,36 @@ export default function MediaTab() {
         <>
           <div className="text-sm text-gray-500 mb-3">{data.total} items</div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-            {data.media.map((m) => (
-              <MediaTile
-                key={`${m.account}:${m.filename}`}
-                item={m}
-                defaultAccount={m.account ?? ""}
-                onClick={() => setActive(m)}
-                className="aspect-square bg-gray-100 rounded overflow-hidden border border-gray-200 hover:border-tg-primary"
-              />
-            ))}
+            {data.media.map((m) => {
+              const linked = m.linked_message as
+                | { peer_name?: string; timestamp?: number }
+                | null
+                | undefined;
+              return (
+                <figure key={`${m.account}:${m.filename}`} className="flex flex-col gap-1">
+                  <MediaTile
+                    item={m}
+                    defaultAccount={m.account ?? ""}
+                    onClick={() => setActive(m)}
+                    className="aspect-square bg-gray-100 rounded overflow-hidden border border-gray-200 hover:border-tg-primary"
+                  />
+                  <figcaption className="text-xs leading-tight truncate">
+                    {linked?.peer_name ? (
+                      <span className="text-gray-700" title={linked.peer_name}>
+                        {linked.peer_name}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 italic">unlinked</span>
+                    )}
+                    {linked?.timestamp ? (
+                      <span className="block text-gray-400">
+                        {formatTimestamp(linked.timestamp)}
+                      </span>
+                    ) : null}
+                  </figcaption>
+                </figure>
+              );
+            })}
           </div>
           <Pagination page={data.page} totalPages={data.total_pages} onChange={setPage} />
         </>

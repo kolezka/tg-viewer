@@ -103,7 +103,7 @@ jq '.[] | select(.peer_id == 15868844285 and .outgoing == true) | .text' \
     tg_2026-04-26_01-26-40/parsed_data/account-*/messages.json
 
 # Total media size by type
-jq '[.[] | {type: .media_type, size: .size_bytes}] | group_by(.type)
+jq '[.[] | {type: .media_type, size: .size}] | group_by(.type)
     | map({type: .[0].type, count: length, mb: ([.[].size] | add / 1048576)})' \
     tg_2026-04-26_01-26-40/parsed_data/account-*/media_catalog.json
 ```
