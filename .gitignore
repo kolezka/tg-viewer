@@ -74,3 +74,16 @@ apps/launchd-bundles/
 # graphify knowledge graph — generated output (graph.json/html, wiki, report).
 # Rebuilt locally by `graphify` + the post-commit hook; not meant to be tracked.
 graphify-out/
+.envrc
+.codegraph/
+graphify-out/cache/
+.graphifyignore
+.gitattributes
+
+# Tool caches
+node_modules/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
