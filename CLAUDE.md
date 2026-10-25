@@ -1,106 +1,84 @@
 # CLAUDE.md
 
-## Project Overview
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Telegram data extraction, decryption, and visualization toolkit for macOS. Extracts deleted messages, secret chats, and creates offline archives.
+## Project overview
 
-## Architecture
+Telegram data extraction, decryption, forensics and visualization toolkit for macOS. Copies the Telegram App Store container, decrypts its SQLCipher Postbox databases, parses the binary message format, surfaces deleted messages and purged media, and serves everything through a local web UI.
+
+Backup directories (`tg_*`, `tg_continuous/`, `tg_vault/`, `test-data/`) hold personal data and are gitignored. Never commit them and never feed them to graph builders.
+
+## Pipeline
 
 ```
-apps/tool/tg-backup.sh → apps/tool/tg_appstore_decrypt.py → apps/tool/postbox_parser.py → python -m api (in apps/)
+tg-backup.sh  ->  tg_appstore_decrypt.py  ->  postbox_parser.py  ->  python -m api  (cwd=apps/)
+   backup            decrypt                     parse                  webui
 ```
 
-`tg-viewer` orchestrates this pipeline. It decrypts `.tempkeyEncrypted` (AES-CBC with SHA-512 of password), opens SQLCipher with `PRAGMA cipher_default_plaintext_header_size = 32`, and parses Postbox binary format from tables t2 (peers) and t7 (messages).
+`./tg-viewer` (bash) orchestrates these steps. Python modules under `apps/tool/` and `apps/api/` are run as packages from `apps/` (`python -m tool.postbox_parser`, `python -m api`), so both `tool` and `api` are top-level imports.
 
-Legacy pipeline (`apps/tool/extract-keys.sh` + `apps/tool/tg_decrypt.py`) still exists but is not used by `tg-viewer`.
+**Decrypt.** `.tempkeyEncrypted` is AES-CBC with a SHA-512 derived key (default password `no-matter-key` when no local passcode is set). The result is a 48-byte raw key + salt. Key correctness is checked with MurmurHash3 x86_32, seed `0xF7CA7FD2`. SQLCipher is opened in raw-key mode with `PRAGMA cipher_default_plaintext_header_size = 32`.
 
-## Key files
+**Parse** (`postbox_parser.py`, per `account-*` directory, steps in order):
+1. peers from table `t2`
+2. messages from table `t7`, then cross-reference MTProto log events against those rows (`log_parser.py`)
+3. full-text rows from `ft41_content` (deleted messages often survive here), media catalog (scan of `media/`), storage catalog from the plaintext sidecar DBs (`storage_db_parser.py`, surfaces tombstones), and a run-vs-run ghost diff against the previous snapshot (`ghost_detector.py`)
+4. combined export with FTS dedup, then grouping by conversation
 
-| File | Purpose |
-|------|---------|
-| `tg-viewer` | CLI orchestrator (bash) — `full`, `backup`, `decrypt`, `parse`, `webui`, `clean` |
-| `apps/tool/tg-backup.sh` | Backup Telegram data from macOS (supports `--batch` for non-interactive use) |
-| `apps/tool/tg_appstore_decrypt.py` | Decrypt .tempkeyEncrypted + open SQLCipher databases |
-| `apps/tool/postbox_parser.py` | Parse Postbox binary format, extract messages/peers/conversations |
-| `apps/tool/redact.py` | Console output redaction helpers |
-| `apps/api/` | FastAPI backend package — `python -m api` (with `cwd=apps/`); mounts `apps/web/dist/` via StaticFiles |
-| `apps/api/routers/` | Per-resource routers — `chats`, `messages`, `media`, `users`, `stats`, `databases`, `export_data` |
-| `apps/api/tests/` | Pytest suite (FastAPI + peer/postbox unit tests) |
-| `apps/web/` | React + Bun frontend (TanStack Query, Tailwind, OpenAPI codegen) — `bun run dev` for HMR; `bun run build` → `apps/web/dist/` |
-| `apps/tool/extract-keys.sh` | Extract keys from Keychain (legacy) |
-| `apps/tool/tg_decrypt.py` | Legacy decryptor (tries multiple key formats) |
+Output per account in `parsed_data/account-<id>/`: `messages.json`, `peers.json`, `conversations_index.json`, `messages_fts.json`, `media_catalog.json`, `storage_catalog.json`, `log_events.json`, `ghosts_history.json`, plus a top-level `summary.json`. `apps/api/loader.py` reads exactly these names; the parser and the API `MediaItem`/model field names must agree or the UI shows blanks.
 
-## Development commands
+**Forensics layer.** Three independent sources describe the same media file: the storage catalog (filename, size, on-disk flag), the MTProto debug logs (`<backup>/logs/`, envelope metadata only, payloads are truncated) and `t7` rows with `media[].file_id`. `apps/tool/forensics.py` joins them by `file_id`; tombstones (`on_disk=False`) sort first.
+
+**Continuous capture.** `tg_daemon.py` runs backup, decrypt and parse every 5 minutes with `rsync --link-dest` so a snapshot costs only delta bytes, and prunes by a tiered retention policy. `tg_watcher.py` listens to FSEvents and copies new media into a content-addressed vault (`objects/<sha256>` + `index.jsonl`) to catch upload-then-purge files the daemon would miss. `launchd_install.py` wraps both in code-signed `.app` bundles so TCC remembers consent across restarts.
+
+**Web UI.** `apps/api/app.py` registers routers (`databases`, `users`, `chats`, `messages`, `media`, `storage`, `stats`, `export_data`, `logs`, `ghosts`, `forensics`) before mounting `apps/web/dist/` as `StaticFiles(html=True)` at `/`; the order matters because the catch-all static mount would otherwise shadow the API. State lives on `app.state.app_state` (`AppState`), not module globals. The frontend is React + Bun with TanStack Query and Tailwind; `apps/web/src/api/types.ts` is generated from the running API's OpenAPI schema.
+
+Legacy pipeline (`apps/tool/extract-keys.sh`, `apps/tool/tg_decrypt.py`) still exists but `tg-viewer` does not use it.
+
+## Commands
 
 ```bash
-# First-time setup: creates .venv/, installs Python deps, bun install + build
-./tg-viewer setup && source .venv/bin/activate
+./tg-viewer setup && source .venv/bin/activate   # venv, Python deps, bun install + build
 
-# Full workflow (backup + decrypt + parse + web UI)
-./tg-viewer full
-
-# Individual steps
+./tg-viewer full                                 # backup -> decrypt -> parse -> webui
 ./tg-viewer backup ./data
 ./tg-viewer decrypt ./data/tg_*/
 ./tg-viewer parse ./data/tg_*/
-./tg-viewer webui ./data/tg_*/parsed_data
+./tg-viewer webui ./data/tg_*/parsed_data        # builds apps/web/dist/ if missing
+./tg-viewer dev ./data/tg_*/parsed_data          # FastAPI :5000 + Bun HMR :5173 proxying /api, /docs, /openapi.json
 
-# Two-process dev stack: FastAPI on :5000 + Bun HMR on :5173 (with API proxy)
-./tg-viewer dev ./data/tg_*/parsed_data
-
-# Cleanup generated data
-./tg-viewer clean
+./tg-viewer ghosts [OLD NEW]                     # diff two parsed_data snapshots (defaults: two newest)
+./tg-viewer daemon [DEST] [SECONDS]              # foreground capture loop, default ./tg_continuous every 300 s
+./tg-viewer watcher [VAULT]                      # FSEvents vault, default ./tg_vault
+./tg-viewer install-launchd | uninstall-launchd | launchd-status
+./tg-viewer clean                                # delete all backup, decrypted and parsed data
 ```
 
-Useful flags (apply to `decrypt`/`parse`/`webui`/`full`): `--account ID|NAME`
-(scope to one account — accepts `account-{id}`, bare numeric id, or peerName
-from `accounts-shared-data`), `--redact` (mask IDs/keys/paths in CLI output),
-`--port`, `--host`.
+Flags for `decrypt`/`parse`/`webui`/`full`: `--account ID|NAME` (an `account-<id>` folder, a bare numeric id, or a peerName from `accounts-shared-data`), `--redact` (mask ids, keys and paths in CLI output), `--port`, `--host`.
 
-## Tests
+`make` wraps the same commands with variables (`make webui DATA=./tg_*/parsed_data ACCOUNT=name`, `make daemon DEST=... INTERVAL=...`). `make import /path/to/account-<id>` stages an already-copied account next to the live `.tempkeyEncrypted` and runs decrypt, parse and webui.
+
+## Tests and checks
 
 ```bash
-pytest                                       # backend (paths set in pyproject.toml → apps/api/tests)
-cd apps/web && bun run typecheck             # frontend TS check
-cd apps/web && bun run codegen               # regenerate OpenAPI types from running API
+pytest                                            # backend suite, testpaths = apps/api/tests
+pytest apps/api/tests/test_fastapi_media.py       # one file
+pytest apps/api/tests/test_ghost_detector.py -k diff   # one test by name
+cd apps/web && bun run typecheck                  # tsc --noEmit
+cd apps/web && bun run codegen                    # regenerate src/api/types.ts from the running API
+cd apps/web && bun run build                      # production bundle -> apps/web/dist/
 ```
 
-## Technical notes
+`apps/api/tests/conftest.py` puts both `apps/` and the repo root on `sys.path` and provides `fastapi_client`, a `TestClient` loaded with the tiny fixture at `apps/api/tests/fixtures/mini-parsed/` (one account, a placeholder JPEG). Endpoint tests run against that fixture, not real data. There is no frontend test runner; the TS check is the gate.
 
-- SQLCipher config: `cipher_default_plaintext_header_size = 32`, raw key mode (key + salt = 48 bytes hex)
-- Default password: `"no-matter-key"` (when no local passcode set)
-- Key verification: MurmurHash3 x86_32 with seed `0xF7CA7FD2`
-- Postbox peer tags: `02fn04` (first_name), `02ln04` (last_name), `02un04` (username), `01t04` (title)
-- t7 message key: peer_id(8b BE) + padding(4b) + timestamp(4b BE) + namespace(4b BE)
-- Secret chat remote peer: field `r` (`01 72 01` + user_id as LE int32/int64)
-- Backup directories (`tg_*`, `test-data/`) are gitignored
+## Binary format notes
 
-## graphify
+- Postbox peer tags in `t2` values: `02fn04` first_name, `02ln04` last_name, `02un04` username, `01t04` title
+- `t7` key: peer_id (8 bytes BE) + padding (4) + timestamp (4 BE) + namespace (4 BE); the namespace is set for secret-chat messages
+- Secret chat remote peer: field `r` (`01 72 01` + user_id as LE int32 or int64)
+- Storage sidecar table `t15`: 16-byte opaque key, value = `0x00`, uint16 LE name length, UTF-8 name, status byte
+- Media filenames encode a signed `file_id`; a negative id appears as a doubled separator (`local-file--123...`)
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+Longer references live in `docs/` (`cheat-sheet.md` for forensic gotchas, `output-format.md` for the JSON schemas, `architecture.md` for the decryption flow).
 
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
-
-<!-- repo-intel:begin -->
-## Code graphs
-
-This repo is indexed for faster lookup. Use the right tool for the question.
-
-Where is X defined, who calls it, what breaks if it changes: use codegraph.
-The `codegraph_explore` MCP tool if available, else `codegraph explore
-"<symbols>"`, `codegraph impact X`, `codegraph affected <files>`.
-
-Concepts, architecture, why something was decided: use graphify.
-`graphify query "<question>"`, `graphify explain X`, `graphify path "A" "B"`.
-
-Literal text, config values, error strings, and every call site before calling
-a change safe or code unused: use rg (or grep), not the graphs. They miss
-dynamic dispatch, generated code and bodies wrapped in higher-order calls.
-
-Refresh when stale: `repo-intel build` if installed, else `codegraph sync`
-and `graphify update .`.
-<!-- repo-intel:end -->
+@AGENTS.md
