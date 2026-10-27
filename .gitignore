@@ -78,6 +78,7 @@ graphify-out/
 .codegraph/
 graphify-out/cache/
 .graphifyignore
+.repo-intel.json
 .gitattributes
 
 # Tool caches
