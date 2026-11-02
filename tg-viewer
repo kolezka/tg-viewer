@@ -13,6 +13,13 @@ POSTBOX_PARSER_SCRIPT="$SCRIPT_DIR/apps/tool/postbox_parser.py"
 WEBUI_SCRIPT_DIR="$SCRIPT_DIR/apps/api"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
 
+# An activated env wins; otherwise use the project .venv so nobody has to activate it.
+if [[ -z "${VIRTUAL_ENV:-}" && -z "${CONDA_PREFIX:-}" && -x "$SCRIPT_DIR/.venv/bin/python3" ]]; then
+    PYTHON="$SCRIPT_DIR/.venv/bin/python3"
+else
+    PYTHON="python3"
+fi
+
 # ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; BLUE='\033[0;34m'; NC='\033[0m'
 
@@ -52,7 +59,7 @@ _resolve_account_id() {
     [[ -n "$shared" ]] || die "Cannot resolve --account '$raw': accounts-shared-data not found near $search_dir"
 
     local output rc
-    output=$(python3 - "$shared" "$raw" 2>&1 <<'PYEOF'
+    output=$("$PYTHON" - "$shared" "$raw" 2>&1 <<'PYEOF'
 import json, sys
 shared, query = sys.argv[1], sys.argv[2].lower()
 data = json.load(open(shared))
@@ -152,10 +159,10 @@ check_dependencies() {
     [[ -d "$WEBUI_SCRIPT_DIR" ]] || missing+=("apps/api/")
     
     # Check Python
-    if ! command -v python3 &>/dev/null; then
+    if ! command -v "$PYTHON" &>/dev/null; then
         missing+=("python3")
     fi
-    
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         die "Missing dependencies: ${missing[*]}\nRun './tg-viewer setup' to install"
     fi
@@ -274,7 +281,7 @@ run_decrypt() {
         account_arg=(--account "$resolved")
         log "Account filter: $TG_ACCOUNT_RAW → account-$(_redact_path "$resolved")"
     fi
-    (cd "$SCRIPT_DIR/apps" && python3 -m tool.tg_appstore_decrypt "$abs_backup_dir" "${redact_arg[@]+"${redact_arg[@]}"}" "${account_arg[@]+"${account_arg[@]}"}")
+    (cd "$SCRIPT_DIR/apps" && "$PYTHON" -m tool.tg_appstore_decrypt "$abs_backup_dir" "${redact_arg[@]+"${redact_arg[@]}"}" "${account_arg[@]+"${account_arg[@]}"}")
 }
 
 run_parse() {
@@ -299,7 +306,7 @@ run_parse() {
         account_arg=(--account "$resolved")
         log "Account filter: $TG_ACCOUNT_RAW → account-$(_redact_path "$resolved")"
     fi
-    (cd "$SCRIPT_DIR/apps" && python3 -m tool.postbox_parser "$abs_backup_dir" "${redact_arg[@]+"${redact_arg[@]}"}" "${account_arg[@]+"${account_arg[@]}"}")
+    (cd "$SCRIPT_DIR/apps" && "$PYTHON" -m tool.postbox_parser "$abs_backup_dir" "${redact_arg[@]+"${redact_arg[@]}"}" "${account_arg[@]+"${account_arg[@]}"}")
 }
 
 run_webui() {
@@ -341,7 +348,7 @@ run_webui() {
         account_arg=(--account "$resolved")
         log "Account filter: $TG_ACCOUNT_RAW → account-$(_redact_path "$resolved")"
     fi
-    (cd "$SCRIPT_DIR/apps" && python3 -m api "$abs_data_dir" --host "$host" --port "$port" "${account_arg[@]+"${account_arg[@]}"}")
+    (cd "$SCRIPT_DIR/apps" && "$PYTHON" -m api "$abs_data_dir" --host "$host" --port "$port" "${account_arg[@]+"${account_arg[@]}"}")
 }
 
 run_dev() {
@@ -377,7 +384,7 @@ run_dev() {
     fi
 
     # Start FastAPI in background
-    (cd "$SCRIPT_DIR/apps" && python3 -m api "$abs_data_dir" --port 5000 "${account_arg[@]+"${account_arg[@]}"}") &
+    (cd "$SCRIPT_DIR/apps" && "$PYTHON" -m api "$abs_data_dir" --port 5000 "${account_arg[@]+"${account_arg[@]}"}") &
     local api_pid=$!
 
     # Start Tailwind watcher in background
@@ -496,7 +503,7 @@ run_ghosts() {
     local out="$SCRIPT_DIR/ghosts_diff.json"
     # Pass paths via env (not string interpolation) so a path containing a
     # single quote can't break or inject into the Python source.
-    (cd "$SCRIPT_DIR/apps" && OLD_PARSED="$old_parsed" NEW_PARSED="$new_parsed" OUT="$out" python3 -c "
+    (cd "$SCRIPT_DIR/apps" && OLD_PARSED="$old_parsed" NEW_PARSED="$new_parsed" OUT="$out" "$PYTHON" -c "
 import json, os, sys
 sys.path.insert(0, '.')
 from tool import ghost_detector
